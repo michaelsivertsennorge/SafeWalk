@@ -1300,12 +1300,17 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
   const voterId = currentVoterId();
   let affected = 0;
   let skippedAlreadyVoted = 0;
+  // Every pin the route actually passed, whether or not this person could still vote on it. The
+  // verdict is evidence about all of them, so it counts toward their authors' accuracy even where
+  // the vote itself is a duplicate.
+  const judged = new Set();
   for (let i = 0; i < activeRouteCoords.length; i += step) {
     const [lat, lng] = activeRouteCoords[i];
     const nearby = findNearbyPin(lat, lng, 60);
     if (nearby) {
       if (touched.has(nearby.id)) continue;
       touched.add(nearby.id);
+      if (!nearby.own) judged.add(nearby.id);
       if ((nearby.voters || []).includes(voterId)) { skippedAlreadyVoted++; continue; }
       if (rating === 'safe') nearby.safe++; else nearby.danger++;
       if (note) nearby.notes.push({ text: note, rating });
@@ -1331,6 +1336,7 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
     }
     affected++;
   }
+  recordRouteJudgement([...judged], rating);
   renderPins();
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
@@ -1772,6 +1778,40 @@ function renderAccountState() {
   }
 }
 
+// ---------- Reporter standing ----------
+// Only ever about yourself. There is no way to look up anyone else's accuracy, by design: a public
+// score would invite harassment and would discourage exactly the unpopular warnings this app needs.
+async function refreshStanding() {
+  const row = document.getElementById('standingRow');
+  if (!row) return;
+  if (!currentUser) { row.hidden = true; return; }
+  const { data, error } = await sb.rpc('my_standing');
+  if (error || !data || !data.length) { row.hidden = true; return; }
+  const s = data[0];
+  const total = Number(s.confirmations) + Number(s.contradictions);
+  row.hidden = false;
+  const headline = document.getElementById('standingHeadline');
+  const detail = document.getElementById('standingDetail');
+
+  if (!total) {
+    headline.textContent = 'No feedback on your marks yet';
+    detail.textContent = 'Once people walk routes past the places you have marked, their experience shows up here.';
+    row.classList.remove('standing-warn');
+    return;
+  }
+  const pct = Math.round((Number(s.confirmations) / total) * 100);
+  if (s.in_cooldown) {
+    row.classList.add('standing-warn');
+    headline.textContent = 'New marks are paused';
+    const until = s.cooldown_until ? new Date(s.cooldown_until).toLocaleDateString() : '';
+    detail.textContent = `Most recent walkers disagreed with your marks (${pct}% matched, from ${total} reports). You can still vote and use every other feature; adding new marks unlocks again${until ? ' around ' + until : ' as older feedback ages out'}.`;
+  } else {
+    row.classList.remove('standing-warn');
+    headline.textContent = `${pct}% of walkers agreed with your marks`;
+    detail.textContent = `Based on ${total} report${total === 1 ? '' : 's'} from people who walked past them in the last 30 days.`;
+  }
+}
+
 function setAuthMode(mode) {
   authMode = mode;
   const signin = mode === 'signin';
@@ -1894,7 +1934,20 @@ async function refreshPinsFromCloud() {
 async function persistCreate(pin) {
   if (!currentUser) return;
   const { data, error } = await sb.from('pins').insert(pinToRow(pin)).select('id').single();
-  if (error) { showToast('Could not save to your account: ' + error.message); return; }
+  if (error) {
+    // The cooldown is enforced by a row-level-security policy, so a suspended account gets a
+    // generic policy violation. Translate it, or the person is left guessing why nothing saved.
+    const blocked = /row-level security|policy/i.test(error.message || '');
+    pins = pins.filter((x) => x.id !== pin.id); // it never reached the server; don't pretend it did
+    renderPins();
+    if (blocked) {
+      showToast('Your marks are paused for now — see My Page for why.');
+      refreshStanding();
+    } else {
+      showToast('Could not save to your account: ' + error.message);
+    }
+    return;
+  }
   pin.id = data.id; // swap the local temp id for the real one
   await sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating });
 }
@@ -1916,6 +1969,17 @@ async function persistDelete(id) {
   if (error) showToast('Could not delete: ' + error.message);
 }
 
+// Feeds the reputation system: tells the database that this walker's verdict either backed up or
+// contradicted whoever marked each pin. Which account wrote which pin stays server-side — the
+// function looks that up itself, so nothing here reveals authorship.
+async function recordRouteJudgement(pinIds, rating) {
+  if (!currentUser || !pinIds.length) return;
+  const { error } = await sb.rpc('record_route_judgement', { p_pin_ids: pinIds, p_rating: rating });
+  // Deliberately quiet: this is bookkeeping about other people, and the walker's own feedback has
+  // already been saved. Failing it loudly would be noise they can do nothing about.
+  if (error) console.warn('Could not record route judgement:', error.message);
+}
+
 async function persistVote(pinId, rating) {
   if (!currentUser) return;
   // The (pin_id, user_id) primary key is what actually guarantees one vote per person here.
@@ -1929,6 +1993,7 @@ if (sb) {
     currentUser = session ? session.user : null;
     renderAccountState();
     await refreshPinsFromCloud();
+    refreshStanding();
   });
 }
 

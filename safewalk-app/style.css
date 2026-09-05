@@ -586,6 +586,21 @@ textarea { min-height: 64px; resize: vertical; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Your own accuracy, never anyone else's. Neutral by default — it's information, not a scolding. */
+.standing-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+}
+.standing-row strong { font-size: 14px; }
+.standing-row span { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.standing-row.standing-warn { border-color: #f5c945; background: rgba(245, 201, 69, 0.09); }
+
 /* Quiet by design: it only matters when we're asking "which build are you on?" */
 .version-line {
   margin: 10px 0 0;

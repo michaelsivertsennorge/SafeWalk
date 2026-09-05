@@ -26,9 +26,17 @@ Write-Host "Serving $Root on port $Port (any hostname/interface)"
 while ($true) {
   $client = $listener.AcceptTcpClient()
   try {
+    # This loop handles one connection at a time, so a socket that opens and then says nothing would
+    # block every other request forever. Browsers do exactly that routinely — speculative preconnect
+    # sockets are opened and left idle — and without these timeouts the server wedges with a pile of
+    # CLOSE_WAIT connections and stops answering entirely.
+    $client.ReceiveTimeout = 5000
+    $client.SendTimeout = 5000
+
     $stream = $client.GetStream()
     $reader = New-Object System.IO.StreamReader($stream)
     $requestLine = $reader.ReadLine()
+    if ([string]::IsNullOrEmpty($requestLine)) { continue }  # preconnect with no request; drop it
     while ($true) {
       $line = $reader.ReadLine()
       if ([string]::IsNullOrEmpty($line)) { break }
@@ -53,6 +61,8 @@ while ($true) {
       $headerWriter.WriteLine("HTTP/1.1 200 OK")
       $headerWriter.WriteLine("Content-Type: $ct")
       $headerWriter.WriteLine("Content-Length: $($bytes.Length)")
+      # Dev server: never let a stale copy be cached, or you end up debugging the previous build.
+      $headerWriter.WriteLine("Cache-Control: no-store, must-revalidate")
       $headerWriter.WriteLine("Connection: close")
       $headerWriter.WriteLine("")
       $headerWriter.Flush()
