@@ -36,10 +36,11 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div class="trim-panel" id="trimPanel" hidden>
-    <p id="trimHint">Drag the two handles to choose which part of the street to mark.</p>
+    <p id="trimHint">Tap where the stretch starts.</p>
     <div class="trim-panel-actions">
       <button class="btn btn-ghost" id="trimCancelBtn">Cancel</button>
-      <button class="btn btn-primary" id="trimDoneBtn">Use this stretch</button>
+      <button class="btn btn-secondary" id="trimUndoBtn" hidden>↩ Undo</button>
+      <button class="btn btn-primary" id="trimDoneBtn" disabled>Use this stretch</button>
     </div>
   </div>
 
