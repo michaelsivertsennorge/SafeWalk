@@ -266,11 +266,13 @@ function ratingBand(ratio) {
   if (ratio < 0.5) return 'danger';
   return 'mixed';
 }
+// Pulled from the active theme rather than hardcoded, so the map recolours with everything else.
+// The fallbacks are the original palette, in case the stylesheet hasn't parsed yet.
 function ratingColor(ratio) {
   const band = ratingBand(ratio);
-  if (band === 'safe') return '#10b981';
-  if (band === 'danger') return '#f43f5e';
-  return '#f5c945';
+  if (band === 'safe') return token('--safe-strong', '#10b981');
+  if (band === 'danger') return token('--danger-strong', '#f43f5e');
+  return token('--mixed', '#f5c945');
 }
 
 // Color alone (red/yellow/green) is one of the least accessible combinations for colorblind users,
@@ -336,7 +338,7 @@ async function loadLighting() {
       const wkt = obj.geometri && obj.geometri.wkt;
       if (!wkt || !wkt.startsWith('LINESTRING')) return;
       L.polyline(parseWktLineStringZ(wkt), {
-        color: '#facc15',
+        color: token('--mixed', '#facc15'),
         weight: 3,
         opacity: 0.5,
         interactive: false,
@@ -373,9 +375,9 @@ function updateUserMarker(lat, lng, accuracy) {
     if (!userAccuracyCircle) {
       userAccuracyCircle = L.circle([lat, lng], {
         radius: accuracy,
-        color: '#4a9eff',
+        color: token('--you', '#4a9eff'),
         weight: 1,
-        fillColor: '#4a9eff',
+        fillColor: token('--you', '#4a9eff'),
         fillOpacity: 0.12,
         interactive: false,
       }).addTo(map);
@@ -487,10 +489,10 @@ function beginGrow() {
   map.dragging.disable();
   press.circle = L.circle(press.latlng, {
     radius: HOLD_MIN_RADIUS_M,
-    color: '#f5c945',
+    color: token('--mixed', '#f5c945'),
     weight: 2,
     dashArray: '4 5',
-    fillColor: '#f5c945',
+    fillColor: token('--mixed', '#f5c945'),
     fillOpacity: 0.22,
     interactive: false,
   }).addTo(map);
@@ -744,7 +746,7 @@ function redrawTrimActive() {
     L.circleMarker([n.lat, n.lng], {
       radius: i === 0 ? 7 : 6,
       color: '#fff', weight: 2,
-      fillColor: i === 0 ? '#4ade80' : '#8b7bff',
+      fillColor: i === 0 ? token('--safe', '#4ade80') : token('--accent', '#8b7bff'),
       fillOpacity: 1, interactive: false,
     }).addTo(trimState.dotLayer);
   });
@@ -769,7 +771,7 @@ function redrawTrimActive() {
 // behaviour that dragging two handles could never express.
 function startStreetPicker(graph, seedLat, seedLng, existingPath) {
   closeSheets();
-  const activeLine = L.polyline([], { color: '#8b7bff', weight: 7, opacity: 0.95, interactive: false }).addTo(map);
+  const activeLine = L.polyline([], { color: token('--accent', '#8b7bff'), weight: 7, opacity: 0.95, interactive: false }).addTo(map);
   const dotLayer = L.layerGroup().addTo(map);
 
   trimState = {
@@ -1419,7 +1421,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     const entries = [];
     scored.forEach((r, rank) => {
       const isBest = rank === 0;
-      const poly = L.polyline(r.coords, { color: '#5b5d94', weight: 4, opacity: 0.55 }).addTo(routeLayer);
+      const poly = L.polyline(r.coords, { color: token('--text-dim', '#5b5d94'), weight: 4, opacity: 0.55 }).addTo(routeLayer);
 
       const mins = Math.round(r.durationSec / 60);
       const km = r.distanceKm.toFixed(2);
@@ -1447,7 +1449,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
         e.poly.setStyle({
           // Purple, not green — a route line needs to read as "directions," clearly distinct from
           // the green/yellow/red used for street safety ratings, or the two get visually confused.
-          color: active ? '#8b7bff' : '#5b5d94',
+          color: active ? token('--accent', '#8b7bff') : token('--text-dim', '#5b5d94'),
           weight: active ? 6 : 4,
           opacity: active ? 0.95 : 0.55,
         });
@@ -1506,10 +1508,91 @@ document.getElementById('darkMapToggle').addEventListener('change', (e) => {
   document.getElementById('map').classList.toggle('dark-tiles', e.target.checked);
 });
 
+// ---------- Themes ----------
+const THEME_KEY = 'safewalk_theme';
+const THEMES = [
+  { id: 'midnight', name: 'Midnight', hint: 'The original deep blue' },
+  { id: 'blossom', name: 'Blossom', hint: 'Soft pastels, light' },
+  { id: 'dusk', name: 'Dusk', hint: 'Pastels for night walking' },
+  { id: 'contrast', name: 'Contrast', hint: 'Maximum legibility' },
+];
+
+function currentTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  return THEMES.some((t) => t.id === saved) ? saved : 'midnight';
+}
+
+function applyTheme(id, { followMapDefault = false } = {}) {
+  document.documentElement.setAttribute('data-theme', id);
+  localStorage.setItem(THEME_KEY, id);
+  // Picking a theme sets the map to match it — a light theme with an inverted black map looks
+  // broken. The dark-map switch is still there to override afterwards if you disagree.
+  if (followMapDefault) {
+    const wantsDark = getComputedStyle(document.documentElement).getPropertyValue('--invert-tiles').trim() !== '0';
+    localStorage.setItem(DARK_MAP_KEY, wantsDark ? 'true' : 'false');
+  }
+  applyDarkMapPref();
+  renderThemePicker();
+  // Map shapes are drawn with resolved colours, not CSS, so they have to be redrawn to pick up
+  // the new palette. Without this the sheets restyle instantly and the map stays on the old theme.
+  renderPins();
+  refreshMapChrome();
+}
+
+function renderThemePicker() {
+  const wrap = document.getElementById('themePicker');
+  if (!wrap) return;
+  const active = currentTheme();
+  wrap.innerHTML = '';
+  THEMES.forEach((t) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'theme-chip' + (t.id === active ? ' selected' : '');
+    btn.setAttribute('aria-pressed', String(t.id === active));
+    btn.innerHTML = `
+      <span class="theme-swatch theme-swatch-${t.id}" aria-hidden="true">
+        <i class="sw-bg"></i><i class="sw-accent"></i><i class="sw-safe"></i><i class="sw-danger"></i>
+      </span>
+      <span class="theme-name">${t.name}</span>
+      <span class="theme-hint">${t.hint}</span>`;
+    btn.addEventListener('click', () => {
+      applyTheme(t.id, { followMapDefault: true });
+      buzz();
+    });
+    wrap.appendChild(btn);
+  });
+}
+
+// Reads a theme token as a real colour value, for the parts of the map drawn by Leaflet rather
+// than styled by CSS.
+function token(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+// The map layers that aren't pins: your location dot, the 1 km rating boundary, and the lit-street
+// overlay. Restyled in place rather than rebuilt, so switching theme doesn't re-request NVDB or
+// drop your position fix.
+function refreshMapChrome() {
+  if (userAccuracyCircle) {
+    userAccuracyCircle.setStyle({ color: token('--you', '#4a9eff'), fillColor: token('--you', '#4a9eff') });
+  }
+  if (userRangeCircle) userRangeCircle.setStyle({ color: token('--text-dim', '#8b93a8') });
+  lightingLayer.eachLayer((l) => {
+    if (l.setStyle) l.setStyle({ color: token('--mixed', '#facc15') });
+  });
+  if (trimState) {
+    trimState.activeLine.setStyle({ color: token('--accent', '#8b7bff') });
+    redrawTrimActive();
+  }
+}
+
 document.getElementById('settingsBtn').addEventListener('click', () => {
   cancelPicking();
   renderContacts();
   applyDarkMapPref();
+  renderThemePicker();
+  refreshStanding();
   openSheet('settingsSheet');
 });
 
@@ -1577,6 +1660,7 @@ document.getElementById('clearDataBtn').addEventListener('click', async () => {
   localStorage.removeItem(CONTACTS_KEY);
   localStorage.removeItem(ONBOARDED_KEY);
   localStorage.removeItem(DARK_MAP_KEY);
+  localStorage.removeItem(THEME_KEY);
   location.reload();
 });
 
@@ -2006,7 +2090,8 @@ refreshPinsFromCloud();
 renderPins();
 locate(true);
 loadLighting();
-applyDarkMapPref();
+// Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
+applyTheme(currentTheme());
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);
 // Re-check at fire time, not just at schedule time — if the user already dismissed onboarding, or
 // is already mid-action (say, they tapped the map to rate a spot before this timer fired), don't

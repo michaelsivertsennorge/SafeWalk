@@ -5,20 +5,24 @@ item, do it properly, and open a PR — not sweep through several.
 
 ## Asked for by the owner
 
-### Visual design: pastel palette and themes
-The current look is dark and utilitarian. Wanted: a cleaner interface, more colour, prettier
-buttons, pastel tones, and eventually a theme picker so people can choose their own.
+### Visual design: pastel palette and themes — **done, first pass**
+Four themes ship: Midnight (the original), Blossom (pastel light), Dusk (pastel dark) and Contrast.
+Picker lives in My Page; choice is stored per-device in `localStorage`. Every colour in the app is
+now a CSS custom property, including the ones Leaflet draws on the map, so a theme is purely a new
+set of token values — no per-theme stylesheet, no rebuild.
 
-Worth doing carefully rather than quickly:
-- The rating colours (red / amber / green) carry meaning and are already paired with dash patterns
-  for colourblind users. A pastel palette must keep both the contrast and that redundant encoding —
-  a prettier map that is harder to read at a glance is a downgrade, not an upgrade.
-- Contrast has to survive on a phone screen outdoors at night, which is the actual usage context.
-  Aim for WCAG AA on text; do not let pastels drop body text below it.
-- Themes should be CSS custom properties swapped at `:root`, stored per-device in `localStorage`
-  alongside the existing dark-map preference. No rebuild, no per-theme stylesheet.
-- The map tiles are recoloured with a CSS filter, so any theme has to be checked against the live
-  map, not just the sheets.
+Measured, not assumed: all four themes pass WCAG AA (4.5:1) for body text, dim text, and all three
+rating colours used as text. Blossom's amber started at 3.43:1 and was darkened to 5.25:1 because
+`ratingColor()` is used as *text* on the pin score, where the 3:1 allowance for graphical objects
+does not apply.
+
+Still worth doing here:
+- Buttons are still fairly plain. "Prettier buttons" was part of the ask and has not really been
+  addressed — only the palette has.
+- No per-theme testing on a real phone outdoors yet.
+- A custom/user-defined theme (pick your own accent) is not implemented; only the four presets.
+- Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
+  what makes the map readable for colourblind users, and no palette change may drop it.
 
 ### Still open
 - **Politiloggen integration.** Police incident data (politiet.no, NLOD 2.0) marking places red
