@@ -1,0 +1,10 @@
+# Local tunnel binary (~53 MB) and its log — downloaded tooling, not source.
+cloudflared.exe
+cloudflared.log
+
+# Build/packaging output
+SafeWalk-app.zip
+
+# OS noise
+Thumbs.db
+.DS_Store

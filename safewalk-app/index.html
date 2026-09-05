@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#12122b" />
+<title>SafeWalk</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-icon">🌙</span> SafeWalk</div>
+    <button id="settingsBtn" class="icon-btn" aria-label="My Page" title="My Page">👤</button>
+  </header>
+
+  <div id="map"></div>
+
+  <button class="legend-toggle" id="legendToggleBtn" aria-expanded="false" aria-controls="legendPanel">ℹ️ Map key</button>
+  <div class="legend-panel" id="legendPanel" hidden>
+    <div class="legend-row"><span class="legend-swatch"></span>Lit streets (official data)</div>
+    <div class="legend-row"><span class="legend-line line-safe"></span>&gt;75% safe (solid)</div>
+    <div class="legend-row"><span class="legend-line line-mixed"></span>Mixed (dashed)</div>
+    <div class="legend-row"><span class="legend-line line-danger"></span>&gt;50% unsafe (dotted)</div>
+    <p class="legend-note">Line style backs up color, so it still reads if you're colorblind.</p>
+  </div>
+
+  <div class="map-hint" id="mapHint">Tap to rate a spot, or press &amp; hold to mark a bigger area</div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="trim-panel" id="trimPanel" hidden>
+    <p id="trimHint">Drag the two handles to choose which part of the street to mark.</p>
+    <div class="trim-panel-actions">
+      <button class="btn btn-ghost" id="trimCancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="trimDoneBtn">Use this stretch</button>
+    </div>
+  </div>
+
+  <button class="locate-fab" id="locateBtn" aria-label="Center map on my location" title="Center map on my location">
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <line x1="12" y1="2" x2="12" y2="5"></line>
+      <line x1="12" y1="19" x2="12" y2="22"></line>
+      <line x1="2" y1="12" x2="5" y2="12"></line>
+      <line x1="19" y1="12" x2="22" y2="12"></line>
+    </svg>
+  </button>
+
+  <nav class="bottom-bar">
+    <button class="bb-btn" id="routeBtn">
+      <span class="bb-icon">🧭</span><span>Safe Route</span>
+    </button>
+    <button class="bb-btn bb-sos" id="sosBtn">
+      <span class="bb-icon">🆘</span><span>SOS</span>
+    </button>
+  </nav>
+
+  <div class="sheet-backdrop" id="backdrop"></div>
+
+  <!-- Report / rate a new point -->
+  <section class="sheet" id="reportSheet" role="dialog" aria-modal="true" aria-labelledby="reportSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="reportSheetTitle">Rate this location</h2>
+    <p class="sheet-sub" id="reportCoords"></p>
+    <div class="mode-toggle" id="reportShapeToggle">
+      <button type="button" class="mode-btn selected" data-shape="spot">📍 Just this spot</button>
+      <button type="button" class="mode-btn" data-shape="street">🛣️ Whole street</button>
+    </div>
+    <p class="sheet-sub" id="streetLookupStatus" aria-live="polite"></p>
+    <div class="rating-choice">
+      <button class="rate-btn rate-safe" data-rating="safe">
+        <span class="rate-icon">🟢</span>Feels Safe
+      </button>
+      <button class="rate-btn rate-danger" data-rating="danger">
+        <span class="rate-icon">🔴</span>Feels Unsafe
+      </button>
+    </div>
+    <textarea id="reportNote" maxlength="140" aria-label="Optional note" placeholder="Optional note — e.g. well lit, no sidewalk, felt followed... (140 chars)"></textarea>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-primary" id="submitReport" disabled>Submit rating</button>
+    </div>
+  </section>
+
+  <!-- Existing pin details -->
+  <section class="sheet" id="pinSheet" role="dialog" aria-modal="true" aria-labelledby="pinTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="pinTitle">Community reports</h2>
+    <div class="pin-score" id="pinScore"></div>
+    <div class="pin-votes" id="pinVotes"></div>
+    <div class="pin-notes" id="pinNotes"></div>
+    <p class="sheet-label">Add your own rating</p>
+    <div class="rating-choice">
+      <button class="rate-btn rate-safe" data-pin-rating="safe">
+        <span class="rate-icon">🟢</span>Safe
+      </button>
+      <button class="rate-btn rate-danger" data-pin-rating="danger">
+        <span class="rate-icon">🔴</span>Unsafe
+      </button>
+    </div>
+    <p class="sheet-sub" id="pinVoteHint"></p>
+    <button class="btn btn-secondary btn-block" id="pinAddHereBtn">➕ Mark something else here</button>
+    <button class="btn btn-secondary btn-block" id="pinRedragBtn" hidden>🔀 Redrag this street</button>
+    <button class="btn btn-danger btn-block" id="pinDeleteBtn" hidden>Delete this report</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Safe route planner -->
+  <section class="sheet" id="routeSheet" role="dialog" aria-modal="true" aria-labelledby="routeSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="routeSheetTitle">Find the safest route</h2>
+    <p class="sheet-sub">Type an address, or tap 📍 to drop a pin on the map instead.</p>
+    <div class="mode-toggle" id="modeToggle">
+      <button type="button" class="mode-btn selected" data-mode="pedestrian">🚶 Walking</button>
+      <button type="button" class="mode-btn" data-mode="bicycle">🚴 Biking</button>
+    </div>
+    <label class="field-label" for="routeFrom">From</label>
+    <div class="field-row">
+      <input id="routeFrom" type="text" placeholder="My current location" autocomplete="off" name="safewalk-from" />
+      <button type="button" class="pin-btn" id="pinFromBtn" aria-label="Pick start point on map" title="Pick start on map">📍</button>
+    </div>
+    <label class="field-label" for="routeTo">To</label>
+    <div class="field-row">
+      <input id="routeTo" type="text" placeholder="Enter an address or place" autocomplete="off" name="safewalk-to" />
+      <button type="button" class="pin-btn" id="pinToBtn" aria-label="Pick destination on map" title="Pick destination on map">📍</button>
+    </div>
+    <button class="btn btn-primary btn-block" id="findRouteBtn">Find safest route</button>
+    <div id="routeStatus" class="route-status" aria-live="polite"></div>
+    <div id="routeResults" class="route-results"></div>
+    <div class="route-feedback" id="routeFeedback" hidden>
+      <p class="sheet-label">Actually walked or biked this route? Tell us how the selected one felt</p>
+      <div class="rating-choice">
+        <button class="rate-btn rate-safe" data-route-rating="safe">
+          <span class="rate-icon">🟢</span>Felt Safe
+        </button>
+        <button class="rate-btn rate-danger" data-route-rating="danger">
+          <span class="rate-icon">🔴</span>Felt Unsafe
+        </button>
+      </div>
+      <textarea id="routeFeedbackNote" maxlength="140" aria-label="Optional note about this route" placeholder="Optional note (140 chars)"></textarea>
+      <button class="btn btn-primary btn-block" id="submitRouteFeedback" disabled>Submit route feedback</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- My Page: reports/marks, trusted contacts, app settings -->
+  <section class="sheet" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="settingsSheetTitle">My Page</h2>
+    <p class="sheet-sub" id="settingsIntro">Your reports, who to alert, and your data.</p>
+
+    <div class="account-row" id="accountRow">
+      <div class="account-info">
+        <strong id="accountState">Not signed in</strong>
+        <span id="accountHint">Sign in to share your ratings and see other people's.</span>
+      </div>
+      <button class="btn btn-secondary" id="accountActionBtn">Sign in</button>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="myReportsBtn">📍 My reports &amp; marks</button>
+
+    <hr class="divider" />
+    <p class="sheet-label">Preferences</p>
+    <div class="settings-toggle-row">
+      <span>🌙 Dark map</span>
+      <label class="switch">
+        <input type="checkbox" id="darkMapToggle" checked aria-label="Dark map" />
+        <span class="switch-slider"></span>
+      </label>
+    </div>
+    <button class="btn btn-ghost btn-block" id="showOnboardingBtn">Show walkthrough again</button>
+
+    <hr class="divider" />
+    <p class="sheet-label">Emergency contact</p>
+    <p class="sheet-sub">SOS calls this person directly, after you confirm. Just the one.</p>
+    <div id="contactList" class="contact-list"></div>
+    <button class="btn btn-secondary btn-block" id="showContactFormBtn">+ Add emergency contact</button>
+    <div class="contact-form" id="contactForm" hidden>
+      <input id="contactName" type="text" aria-label="Contact name" placeholder="Name" />
+      <input id="contactPhone" type="tel" aria-label="Contact phone number" placeholder="Phone number" />
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" id="cancelContactBtn">Cancel</button>
+        <button class="btn btn-primary" id="addContactBtn">Save</button>
+      </div>
+    </div>
+
+    <hr class="divider" />
+    <button class="btn btn-ghost btn-block" id="clearDataBtn">Clear my data on this device</button>
+    <p class="version-line">SafeWalk <span id="appVersion">…</span></p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- My reports list -->
+  <section class="sheet" id="myReportsSheet" role="dialog" aria-modal="true" aria-labelledby="myReportsSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="myReportsSheetTitle">My reports &amp; marks</h2>
+    <p class="sheet-sub">Ratings you've added on this device. Tap one to view, edit, or delete it.</p>
+    <div id="myReportsList" class="my-reports-list"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Generic in-app confirmation (native confirm() is unreliable in installed/standalone PWA mode) -->
+  <section class="sheet" id="confirmSheet" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p class="sheet-sub" id="confirmMessage"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="confirmCancelBtn">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+    </div>
+  </section>
+
+  <!-- Edit a single owned report -->
+  <section class="sheet" id="editPinSheet" role="dialog" aria-modal="true" aria-labelledby="editPinSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="editPinSheetTitle">Edit report</h2>
+    <p class="sheet-sub" id="editPinCoords"></p>
+    <div class="rating-choice">
+      <button class="rate-btn rate-safe" data-edit-rating="safe">
+        <span class="rate-icon">🟢</span>Feels Safe
+      </button>
+      <button class="rate-btn rate-danger" data-edit-rating="danger">
+        <span class="rate-icon">🔴</span>Feels Unsafe
+      </button>
+    </div>
+    <textarea id="editPinNote" maxlength="140" aria-label="Optional note" placeholder="Optional note (140 chars)"></textarea>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-primary" id="saveEditPin">Save changes</button>
+    </div>
+    <button class="btn btn-danger btn-block" id="deleteEditPin">Delete this report</button>
+  </section>
+
+  <!-- Sign in / create account -->
+  <section class="sheet" id="authSheet" role="dialog" aria-modal="true" aria-labelledby="authSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="authSheetTitle">Sign in</h2>
+    <p class="sheet-sub" id="authIntro">Your ratings sync across your devices, and one account means one vote per place.</p>
+    <input id="authEmail" type="email" autocomplete="email" aria-label="Email" placeholder="Email" />
+    <input id="authPassword" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password (min. 6 characters)" />
+    <p class="sheet-sub" id="authStatus" aria-live="polite"></p>
+    <button class="btn btn-primary btn-block" id="authSubmitBtn">Sign in</button>
+    <button class="btn btn-ghost btn-block" id="authToggleModeBtn">New here? Create an account</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- First-run walkthrough -->
+  <section class="sheet" id="onboardingSheet" role="dialog" aria-modal="true" aria-label="Welcome walkthrough" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <div id="onboardingSlides">
+      <div class="onboarding-slide" data-slide="0">
+        <div class="onboarding-icon">🌙</div>
+        <h2>Welcome to SafeWalk</h2>
+        <p class="sheet-sub">Rate streets and areas as safe or unsafe, find the safest route, and alert someone fast if you need to. Everything here is stored only on this phone.</p>
+      </div>
+      <div class="onboarding-slide" data-slide="1" hidden>
+        <div class="onboarding-icon">📍</div>
+        <h2>Tap to rate a spot</h2>
+        <p class="sheet-sub">Tap anywhere on the map to mark it safe or unsafe. Press and hold instead to grow a circle and mark a whole area.</p>
+      </div>
+      <div class="onboarding-slide" data-slide="2" hidden>
+        <div class="onboarding-icon">🛣️</div>
+        <h2>Mark a whole street</h2>
+        <p class="sheet-sub">Choose "Whole street" when rating, then drag the two handles along the road — even across intersections — to mark exactly the stretch you mean.</p>
+      </div>
+      <div class="onboarding-slide" data-slide="3" hidden>
+        <div class="onboarding-icon">🧭</div>
+        <h2>Find the safest route</h2>
+        <p class="sheet-sub">Get walking or biking directions that favor streets rated safer by the community — then tell us how it actually felt afterward.</p>
+      </div>
+      <div class="onboarding-slide" data-slide="4" hidden>
+        <div class="onboarding-icon">🆘</div>
+        <h2>SOS &amp; My Page</h2>
+        <p class="sheet-sub">The SOS button calls your emergency contact directly, after you confirm. Your own reports, that contact, and settings all live under the profile icon up top.</p>
+      </div>
+    </div>
+    <div class="onboarding-dots" id="onboardingDots"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="onboardingSkip">Skip</button>
+      <button class="btn btn-primary" id="onboardingNext">Next</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
