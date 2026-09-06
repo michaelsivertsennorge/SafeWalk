@@ -36,6 +36,13 @@ It exists because every security bug in this project so far was found by hand, o
 three were the same mistake in different places — see the header comment. Each of those requests is
 now written down.
 
+There is a third suite that neither of those can cover. The reputation system decides whether
+someone is allowed to warn other people about a street, and testing it needs two different
+signed-in users plus the ability to age records — impossible from a browser or an anon key. Paste
+`backend/tests/reputation.sql` into the Supabase SQL editor and Run: it creates throwaway users,
+checks every threshold boundary and the full block-then-expire lifecycle, and rolls back. Nothing
+is left behind, so it is safe against production.
+
 These are deliberately dependency-free. The client has no build step, and a suite that needed one
 would stop being run. They also encode bugs already found in real use — merge idempotency, snapping
 to unreachable streets, the exact 75% band boundary — so those cannot come back unnoticed.
