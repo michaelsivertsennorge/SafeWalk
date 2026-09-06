@@ -41,8 +41,11 @@ Still worth doing here:
 - **Third-party APIs have no SLA.** Overpass, Valhalla, Nominatim and NVDB can all be slow or down.
   Failure paths exist but are thin; a slow Overpass currently just makes the street picker feel
   broken.
-- **Offline.** The service worker caches the shell, but the app has nothing useful to show without
-  the network, and the map is the whole product.
+- **Offline is partly handled.** The last successfully loaded ratings are cached on the device and
+  shown with an age banner when the network is gone, and the street network cache persists for a
+  week. Still missing: map tiles are not cached, so an offline user sees marks floating on a blank
+  background. Any tile caching must respect the OSM tile usage policy — cache what has already been
+  viewed, never bulk-prefetch.
 - **Test coverage is thin.** `tests/geo.test.js` now covers the pure maths in `safewalk-app/geo.js`
   (22 assertions: distances, street graph, shortest paths, polyline decoding, rating bands). Run it
   with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the auth gates, the

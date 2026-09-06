@@ -2117,6 +2117,63 @@ function pinToRow(pin) {
 
 // Runs signed in or not: the map is public, so an anonymous visitor sees the same ratings.
 // The extra votes query only makes sense with an account, so it's skipped when there isn't one.
+// ---------- Offline read cache ----------
+// The map is the whole product, and the person this app is for is often exactly the person with no
+// signal — walking home, phone on 1 bar, wanting to know whether the next street is one people have
+// flagged. So the last successfully loaded set of ratings is kept on the device and shown when the
+// network is gone.
+//
+// This is a READ cache only. It is not a return to storing ratings locally: writing still requires
+// an account and a connection, and anything cached here is replaced wholesale by the next
+// successful fetch. It exists so the app can still answer a question, not so it can accept one.
+const PIN_CACHE_KEY = 'safewalk_pins_cache';
+
+function cachePins(rows) {
+  try {
+    localStorage.setItem(PIN_CACHE_KEY, JSON.stringify({
+      at: Date.now(),
+      userId: currentUser ? currentUser.id : null,
+      rows,
+    }));
+  } catch {
+    // Storage full or blocked. Not worth surfacing: the live path is unaffected.
+  }
+}
+
+function loadCachedPins() {
+  try {
+    const c = JSON.parse(localStorage.getItem(PIN_CACHE_KEY) || 'null');
+    if (!c || !Array.isArray(c.rows)) return null;
+    // "own" was decided for whoever was signed in when this was cached. Trusting it for a different
+    // (or absent) account would offer Edit and Delete on someone else's marks.
+    const mine = c.userId && currentUser && c.userId === currentUser.id;
+    const rows = mine ? c.rows : c.rows.map((r) => ({ ...r, is_mine: false }));
+    return { rows, at: c.at };
+  } catch {
+    return null;
+  }
+}
+
+function describeAge(ts) {
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 2) return 'a moment ago';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  return `${Math.round(hrs / 24)} day${Math.round(hrs / 24) === 1 ? '' : 's'} ago`;
+}
+
+function showStaleBanner(ts) {
+  const el = document.getElementById('staleBanner');
+  if (!el) return;
+  el.textContent = `Offline — showing ratings saved ${describeAge(ts)}`;
+  el.hidden = false;
+}
+function hideStaleBanner() {
+  const el = document.getElementById('staleBanner');
+  if (el) el.hidden = true;
+}
+
 async function refreshPinsFromCloud() {
   if (!sb) return;
   const [{ data: rows, error }, { data: myVotes }] = await Promise.all([
@@ -2125,12 +2182,26 @@ async function refreshPinsFromCloud() {
       ? sb.from('votes').select('pin_id').eq('user_id', currentUser.id)
       : Promise.resolve({ data: [] }),
   ]);
+
   if (error) {
-    showToast("Couldn't load the safety map — check your connection.");
+    // Fall back to whatever we last saw rather than showing an empty map, which would read as
+    // "nothing has been reported here" — the opposite of the truth.
+    const cached = loadCachedPins();
+    if (cached) {
+      pins = cached.rows.map((r) => rowToPin(r, new Set()));
+      renderPins();
+      renderMyReports();
+      showStaleBanner(cached.at);
+    } else {
+      showToast("Couldn't load the safety map — check your connection.");
+    }
     return;
   }
+
+  hideStaleBanner();
   const votedIds = new Set((myVotes || []).map((v) => v.pin_id));
   pins = (rows || []).map((r) => rowToPin(r, votedIds));
+  cachePins(rows || []);
   renderPins();
   renderMyReports();
 }
@@ -2279,7 +2350,16 @@ setInterval(checkForUpdate, 30 * 60 * 1000);
 // Coming back to a backgrounded PWA is the moment an update is most likely to be waiting.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
 
-window.addEventListener('offline', () => showToast("You're offline — showing your last saved data. Live maps, routes, and lookups need a connection."));
+window.addEventListener("offline", () => {
+  // The banner carries the detail (how old the ratings are); this is just the moment it happened.
+  showToast("You are offline. Ratings you already loaded still show; adding or voting needs a connection.");
+});
+
+// Coming back online should not require a reload to get current data again.
+window.addEventListener("online", () => {
+  showToast("Back online — refreshing ratings.");
+  refreshPinsFromCloud();
+});
 window.addEventListener('online', () => showToast('Back online.'));
 
 // Keep userLocation fresh in the background so the 1km rating-proximity check
