@@ -8,9 +8,13 @@
 // Four judgements do most of the work, all measured rather than assumed.
 //
 // 1. WHICH INCIDENTS COUNT. Politiloggen is mostly traffic and fires. Across 50 Oslo messages:
-//    21 Trafikk, 13 Brann, 6 Savnet, 5 Andre hendelser, 3 Voldshendelse, 2 Ro og orden. A car
+//    21 Trafikk, 12 Brann, 6 Savnet, 6 Andre hendelser, 3 Voldshendelse, 2 Ro og orden. A car
 //    crash does not make a street unsafe to walk down, and painting the map red for one would
-//    bury the incidents that do. Only categories bearing on personal safety on foot are mirrored.
+//    bury the incidents that do. Violence and public order are always mirrored. "Andre hendelser"
+//    is admitted only when the thread describes something blocking the way and it is not yet
+//    lifted — see isBlockingIncident. Fires are mostly burnt cooking, and missing-person reports
+//    are deliberately excluded: someone who is missing is not a hazard to a passer-by, and
+//    drawing a red circle around them would be both wrong and unkind.
 //
 // 2. WHERE IT HAPPENED. The structured `area` field is often a whole district: "Gamlebyen"
 //    geocodes to a 2.5km circle. But the officer writing the free text usually names the actual
@@ -48,6 +52,32 @@ const MAX_RADIUS_M = 2500;      // vaguer than this and the circle covers half a
 
 const RELEVANT_CATEGORIES = new Set(['voldshendelse', 'ro og orden']);
 
+// "Andre hendelser" is the awkward one. It is where the police put a cordoned-off pavement after
+// grenades were found in Akerselva — precisely the "ongoing operation near you" this app is for —
+// but also press logistics for a royal funeral. Taking the whole category would put announcements
+// about next Wednesday's road closures on the map as though they were happening now.
+//
+// So it is admitted only when the thread actually describes something blocking the way, and only
+// while it is still blocked. Two things this must NOT rely on:
+//
+//   - Politiloggen's `isActive`. It does not mean "still happening". Measured on a live feed, only
+//     3 of 50 messages had it set, all of them standing royal-visit notices, while every message
+//     of the grenade cordon — including "the pavement WILL BE cordoned off" — had it false.
+//   - The first message alone. The cordon being lifted is announced in the last one.
+//
+// Regex literals, not `new RegExp` on a template string: that is what silently broke STREET_RE.
+const CORDON_RE = /avsperr|sperret av|sperring|stengt|evakuer|hold avstand/i;
+const LIFTED_RE = /opphevet|gjenåpnet|åpnet igjen|avsluttet|normal ferdsel|ikke lenger/i;
+const MEDIA_AREA_RE = /media/i;
+
+// A blocked route matters to someone on foot; the same thread once the block is gone does not.
+function isBlockingIncident(c: Candidate): boolean {
+  if (!CORDON_RE.test(c.search_text ?? c.text_body ?? '')) return false;
+  if (LIFTED_RE.test(c.text_body ?? '')) return false;        // newest message says it is over
+  if (MEDIA_AREA_RE.test(c.area ?? '')) return false;         // press notice, not an incident
+  return true;
+}
+
 // Norwegian street-name endings. Deliberately conservative: a false street is worse than none,
 // because it moves the warning somewhere the police never mentioned.
 const STREET_SUFFIXES = 'veien|vegen|gata|gaten|gate|vei|plassen|stien|bakken|brua|broen|alleen|alléen|torget|kaia|svingen|løkka|parken';
@@ -55,7 +85,8 @@ const STREET_SUFFIXES = 'veien|vegen|gata|gaten|gate|vei|plassen|stien|bakken|br
 // backspace character, not a word boundary, so the pattern began with a literal U+0008 and could
 // never match anything. Street extraction had therefore returned null for every message ever
 // synced — the database had zero events located by street, all of them district-sized blobs —
-// while the comment above claimed the feature worked. It needs "\b" to reach the regex as \b.
+// while the comment above claimed the feature worked. It needs "\\b" in the source to reach
+// the regex engine as \b.
 // The class carries ü and é as well: Grünerbrua and Bygdøy allé are ordinary Oslo street names.
 const STREET_RE = new RegExp(`\\b([A-ZÆØÅ][a-zæøåüéA-ZÆØÅÜÉ-]*(?:${STREET_SUFFIXES}))\\b`, 'g');
 
@@ -115,6 +146,16 @@ function extractStreet(text: string | null): string | null {
 const STREET_EXTRACTION_OK =
   extractStreet('Vi og ambulanse er ved et utested i Rådhusgata etter melding om slagsmål.') === 'Rådhusgata' &&
   extractStreet('Ingen gate nevnt her i det hele tatt.') === null;
+
+// Same reasoning for the cordon rule: silently matching nothing would just look like a quiet week.
+const CORDON_RULE_OK = (() => {
+  const cordon = { area: 'Grünerbrua', text_body: 'Fortauet er avsperret.', search_text: 'Fortauet er avsperret.' } as Candidate;
+  const lifted = { area: 'Grünerbrua', text_body: 'Sperringene er opphevet.', search_text: 'Fortauet er avsperret. Sperringene er opphevet.' } as Candidate;
+  const press = { area: 'Slottet. Media', text_body: 'Flere veier blir stengt.', search_text: 'Flere veier blir stengt.' } as Candidate;
+  const quiet = { area: 'Sentrum', text_body: 'Ingenting spesielt.', search_text: 'Ingenting spesielt.' } as Candidate;
+  return isBlockingIncident(cordon) && !isBlockingIncident(lifted)
+      && !isBlockingIncident(press) && !isBlockingIncident(quiet);
+})();
 
 type GeoHit = { lat: number; lng: number; radius_m: number; precision_label: string; isRoad: boolean };
 
@@ -235,7 +276,10 @@ Deno.serve(async (req) => {
         area: first.area ?? latest.area ?? null,
         text_body: latest.text ?? null,
         search_text: ordered.map((m: any) => m.text ?? '').filter(Boolean).join(' \n'),
-        // The police clear isActive on the final message, so the newest one is the live status.
+        // Passed through as the police report it, but do not read it as "still happening": on a
+        // live feed only 3 of 50 messages had it set, all standing royal-visit notices, while
+        // every message of an active grenade cordon had it false. Whether a route is still
+        // blocked is decided from the text instead — see isBlockingIncident.
         is_active: !!latest.isActive,
         occurred_at: first.createdOn ?? null,
         last_update_at: latest.createdOn ?? first.createdOn ?? null,
@@ -245,7 +289,11 @@ Deno.serve(async (req) => {
 
     const byCategory = allCategories
       ? all
-      : all.filter((c) => RELEVANT_CATEGORIES.has((c.category || '').toLowerCase()));
+      : all.filter((c) => {
+          const cat = (c.category || '').toLowerCase();
+          if (RELEVANT_CATEGORIES.has(cat)) return true;
+          return cat === 'andre hendelser' && isBlockingIncident(c);
+        });
 
     // Drop anything already past its lifetime BEFORE spending any geocode calls on it.
     const now = Date.now();
@@ -271,7 +319,7 @@ Deno.serve(async (req) => {
       const categoryBreakdown: Record<string, number> = {};
       all.forEach((c) => { const k = c.category || '(none)'; categoryBreakdown[k] = (categoryBreakdown[k] || 0) + 1; });
       return json({
-        ok: true, dry: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN',
+        ok: true, dry: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN',
         messages: list.length, incidents: all.length, categoryBreakdown,
         afterCategoryFilter: byCategory.length, skippedTooOld: tooOld,
         stillRelevant: relevant.length, alreadySettled: settled.size,
@@ -306,7 +354,7 @@ Deno.serve(async (req) => {
       written = rows.length;
     }
 
-    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
+    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
   } catch (err) {
     return json({ ok: false, error: String(err).slice(0, 500) }, 500);
   }
