@@ -26,6 +26,7 @@
     <div class="legend-row"><span class="legend-line line-safe"></span>&gt;75% safe (solid)</div>
     <div class="legend-row"><span class="legend-line line-mixed"></span>Mixed (dashed)</div>
     <div class="legend-row"><span class="legend-line line-danger"></span>&gt;50% unsafe (dotted)</div>
+    <div class="legend-row"><span class="legend-police"></span>Police report (recent)</div>
     <p class="legend-note">Line style backs up color, so it still reads if you're colorblind.</p>
   </div>
 
@@ -109,6 +110,18 @@
     <button class="btn btn-secondary btn-block" id="pinAddHereBtn">➕ Mark something else here</button>
     <button class="btn btn-secondary btn-block" id="pinRedragBtn" hidden>🔀 Redrag this street</button>
     <button class="btn btn-danger btn-block" id="pinDeleteBtn" hidden>Delete this report</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Police incidents mirrored from Politiloggen -->
+  <section class="sheet" id="policeSheet" role="dialog" aria-modal="true" aria-labelledby="policeTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="policeTitle">Police reports</h2>
+    <p class="sheet-sub" id="policePrecision"></p>
+    <div id="policeList" class="police-list"></div>
+    <p class="police-attrib">Source: Politiloggen, politiet.no (NLOD 2.0). Shown for about 12 hours after posting.</p>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>

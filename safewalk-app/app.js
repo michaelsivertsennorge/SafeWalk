@@ -344,6 +344,117 @@ async function loadLighting() {
 }
 map.on('moveend', loadLighting);
 
+// ---------- Police incidents (Politiloggen, politiet.no, NLOD 2.0) ----------
+// A different kind of claim from a community rating, and drawn differently on purpose: this is what
+// the police reported, not what a neighbour felt. Only categories bearing on personal safety on
+// foot are mirrored (violence and public order), and only while still recent — see the
+// politiloggen-sync edge function for how location and precision are decided.
+//
+// These are shown, not folded into the route score. An official report is evidence a person should
+// weigh themselves, and quietly moving a route because of one would hide the reason.
+const policeLayer = L.layerGroup().addTo(map);
+let policeEvents = [];
+
+async function loadPoliceEvents() {
+  if (!sb) return;
+  const { data, error } = await sb
+    .from('police_events')
+    .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
+    .gt('expires_at', new Date().toISOString());
+  if (error || !Array.isArray(data)) return;
+
+  policeEvents = data
+    .map((r) => {
+      const p = parsePointGeom(r.geom);
+      return p ? { ...r, lat: p.lat, lng: p.lng } : null;
+    })
+    .filter(Boolean);
+  renderPoliceEvents();
+}
+
+// PostGIS hands geography back as hex EWKB over the REST API. We only ever store points here, so
+// this reads just that case rather than pulling in a whole WKB parser.
+function parsePointGeom(hex) {
+  if (typeof hex !== 'string' || hex.length < 42) return null;
+  try {
+    const littleEndian = hex.slice(0, 2) === '01';
+    const readDouble = (offsetBytes) => {
+      const bytes = new Uint8Array(8);
+      for (let i = 0; i < 8; i++) bytes[i] = parseInt(hex.substr((offsetBytes + i) * 2, 2), 16);
+      return new DataView(bytes.buffer).getFloat64(0, littleEndian);
+    };
+    // 1 byte endianness + 4 bytes type (with SRID flag) + 4 bytes SRID, then X then Y.
+    const lng = readDouble(9);
+    const lat = readDouble(17);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+function renderPoliceEvents() {
+  policeLayer.clearLayers();
+  // Several reports often share one area, because the police name a district rather than a street.
+  // Drawing one circle per report would stack identical rings and imply more than we know.
+  const byPlace = new Map();
+  policeEvents.forEach((e) => {
+    const key = `${e.lat.toFixed(5)},${e.lng.toFixed(5)},${e.radius_m || 0}`;
+    if (!byPlace.has(key)) byPlace.set(key, []);
+    byPlace.get(key).push(e);
+  });
+
+  byPlace.forEach((group) => {
+    const first = group[0];
+    const circle = L.circle([first.lat, first.lng], {
+      radius: first.radius_m || 250,
+      color: token('--danger-strong', '#f43f5e'),
+      weight: 2,
+      dashArray: '3 6',
+      fillColor: token('--danger-strong', '#f43f5e'),
+      fillOpacity: 0.1,
+      className: 'police-area',
+    });
+    circle.on('click', (ev) => {
+      L.DomEvent.stopPropagation(ev);
+      if (trimState) { handleStreetPick(ev.latlng.lat, ev.latlng.lng); return; }
+      openPoliceSheet(group);
+    });
+    circle.addTo(policeLayer);
+  });
+}
+
+function openPoliceSheet(group) {
+  const first = group[0];
+  document.getElementById('policeTitle').textContent = `Police reports — ${first.area || first.municipality}`;
+  // Say plainly how precise this is. The police named an area, not a spot, and the circle is that
+  // area; pretending otherwise would send someone round a corner for no reason.
+  document.getElementById('policePrecision').textContent = first.radius_m
+    ? `Somewhere in this area — the police named “${first.area}”, roughly ${first.radius_m >= 1000 ? (first.radius_m / 1000).toFixed(1) + ' km' : first.radius_m + ' m'} across. Not a specific address.`
+    : 'Location approximate.';
+  const list = document.getElementById('policeList');
+  list.innerHTML = '';
+  group
+    .slice()
+    .sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at))
+    .forEach((e) => {
+      const div = document.createElement('div');
+      div.className = 'police-item';
+      const when = e.occurred_at ? new Date(e.occurred_at).toLocaleString() : '';
+      div.innerHTML = `<div class="police-item-top"><span class="police-cat">${escapeHtml(e.category || 'Incident')}</span><span class="police-when">${escapeHtml(when)}</span></div>`;
+      const body = document.createElement('p');
+      body.className = 'police-text';
+      body.textContent = e.text_body || '';   // textContent, not innerHTML: this is third-party text
+      div.appendChild(body);
+      list.appendChild(div);
+    });
+  openSheet('policeSheet');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 let userLocation = null;
 let pendingPoint = null; // {lat, lng} awaiting a new report
 let pendingRadius = null; // meters — set when the report came from a press-and-hold area mark
@@ -2243,6 +2354,7 @@ refreshPinsFromCloud();
 renderPins();
 locate(true);
 loadLighting();
+loadPoliceEvents();
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);

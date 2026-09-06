@@ -846,3 +846,26 @@ textarea { min-height: 64px; resize: vertical; }
   border-radius: 999px;
   text-align: center;
 }
+
+/* Police incidents. Deliberately unlike a community rating: a dashed ring over an area, because
+   the police name a district rather than a spot, and the circle is that district. */
+.police-area { cursor: pointer; }
+.legend-police {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px dashed var(--danger-strong);
+  background: color-mix(in srgb, var(--danger-strong) 12%, transparent);
+  display: inline-block;
+}
+.police-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 2px; }
+.police-item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger-strong);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--bg-elev);
+}
+.police-item-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.police-cat { font-size: 12px; font-weight: 700; color: var(--danger); }
+.police-when { font-size: 10.5px; color: var(--text-dim); }
+.police-text { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+.police-attrib { margin: 10px 0 0; font-size: 10.5px; color: var(--text-dim); text-align: center; }

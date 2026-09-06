@@ -25,12 +25,21 @@ Still worth doing here:
   what makes the map readable for colourblind users, and no palette change may drop it.
 
 ### Still open
-- **Politiloggen integration.** Police incident data (politiet.no, NLOD 2.0) marking places red
-  temporarily. Verified: the API exists, has `isActive`/`createdOn`, and filters by municipality —
-  but returns **no coordinates** (only municipality + area) and blocks CORS, so it needs a
-  server-side sync job. Geocoding the `area` field is unreliable: "Fuglevik, Råde" resolved to
-  Kristiansand, 230 km away. Any implementation must validate the result against the stated
-  municipality and discard mismatches rather than guessing.
+- **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
+  `politiloggen-sync` edge function and show on the map as dashed red areas. See
+  `backend/functions/politiloggen-sync/README.md` for what it decides and why.
+  Still open here:
+  - **The police often name a street in the free text** ("...i Rådhusgata...") while `area` says
+    only "Sentrum". Extracting street names from `text` would give far better precision and is the
+    single most valuable improvement available to this feature.
+  - **Nominatim has real gaps in Norwegian coverage.** `Økern`, a well-known Oslo district, returns
+    no result at all, so those incidents are skipped. Verified it is not rate-limiting — `Skullerud`
+    succeeds in the same second.
+  - Only `Voldshendelse` and `Ro og orden` are mirrored. Revisit whether `Andre hendelser` is worth
+    including once there is a feel for what it contains.
+  - Police events are shown but deliberately NOT folded into the route score. An official report is
+    evidence a person should weigh themselves, and silently moving a route because of one would hide
+    the reason. Worth revisiting with real usage.
 - **Google sign-in** alongside email/password. Needs Google Cloud console setup.
 - **Reputation tuning.** The cooldown thresholds in `backend/005` (8 judgements, 70% contradicted,
   30-day rolling window) are a first guess with no real data behind them. Revisit once there is
