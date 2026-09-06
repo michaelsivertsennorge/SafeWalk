@@ -365,7 +365,7 @@ async function loadPoliceEvents() {
 
   policeEvents = data
     .map((r) => {
-      const p = parsePointGeom(r.geom);
+      const p = parsePointEwkb(r.geom);
       return p ? { ...r, lat: p.lat, lng: p.lng } : null;
     })
     .filter(Boolean);
@@ -373,26 +373,6 @@ async function loadPoliceEvents() {
   checkPoliceProximity();
 }
 
-// PostGIS hands geography back as hex EWKB over the REST API. We only ever store points here, so
-// this reads just that case rather than pulling in a whole WKB parser.
-function parsePointGeom(hex) {
-  if (typeof hex !== 'string' || hex.length < 42) return null;
-  try {
-    const littleEndian = hex.slice(0, 2) === '01';
-    const readDouble = (offsetBytes) => {
-      const bytes = new Uint8Array(8);
-      for (let i = 0; i < 8; i++) bytes[i] = parseInt(hex.substr((offsetBytes + i) * 2, 2), 16);
-      return new DataView(bytes.buffer).getFloat64(0, littleEndian);
-    };
-    // 1 byte endianness + 4 bytes type (with SRID flag) + 4 bytes SRID, then X then Y.
-    const lng = readDouble(9);
-    const lat = readDouble(17);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    return { lat, lng };
-  } catch {
-    return null;
-  }
-}
 
 function renderPoliceEvents() {
   policeLayer.clearLayers();
