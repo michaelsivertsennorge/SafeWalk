@@ -184,9 +184,69 @@ function decodePolyline(encoded, precision = 6) {
 
 // Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
+// How safe a route looks, per kilometre, given what people have reported near it.
+//
+// The previous version summed `p.safe - p.danger * 1.5` in raw votes, which was wrong in three
+// ways that all pointed the same direction — towards calling a route "safest" when it wasn't:
+//
+//   1. Raw counts meant one popular pin with 20 safe votes buried every other signal on the route.
+//   2. Nothing was normalised by length, so a long route collected more score simply by being
+//      long. "Safest" could quietly mean "longest".
+//   3. A route with no reports at all scored 0 and could still be badged SAFEST, presenting the
+//      absence of evidence as evidence of safety. For an app someone consults before walking home
+//      alone, that is the worst possible failure mode.
+//
+// Now each pin contributes its *lean* (how one-sided its votes are, -1..+1) scaled by a confidence
+// factor, danger weighted more heavily than safety, and the total is divided by route length.
+// `coverage` reports how much of the route anyone has actually said anything about, so the UI can
+// tell "reported safe" apart from "nobody knows".
+// `allPins` is passed in rather than read from a global so this can be tested without a browser.
+function routeSafetyScore(coords, distanceKm, allPins) {
+  const nearbyPins = new Set();
+  let score = 0;
+  let safePins = 0;
+  let dangerPins = 0;
+  let sampled = 0;
+  let sampledWithData = 0;
+
+  const sampleEvery = Math.max(1, Math.floor(coords.length / 40));
+  for (let i = 0; i < coords.length; i += sampleEvery) {
+    const [lat, lng] = coords[i];
+    sampled++;
+    let anyHere = false;
+    allPins.forEach((p) => {
+      // A street/area pin's zone extends along its whole shape, not just its stored midpoint — a
+      // route passing close to one end of a long marked street must still count.
+      const dist = p.paths ? minDistanceToPaths(lat, lng, p.paths) : haversine(lat, lng, p.lat, p.lng);
+      const threshold = Math.max(60, p.radius || 0);
+      if (dist > threshold) return;
+      anyHere = true;
+      if (nearbyPins.has(p.id)) return;
+      nearbyPins.add(p.id);
+
+      const total = p.safe + p.danger;
+      if (!total) return;
+      const lean = (p.safe / total - 0.5) * 2;          // -1 (all unsafe) .. +1 (all safe)
+      const confidence = Math.min(1, total / 4);         // one lone vote is not four votes
+      // A warning deserves more weight than a reassurance here: the cost of ignoring a real danger
+      // is far higher than the cost of avoiding a street that turned out to be fine.
+      score += (lean < 0 ? lean * 1.5 : lean) * confidence;
+      if (lean < 0) dangerPins++; else safePins++;
+    });
+    if (anyHere) sampledWithData++;
+  }
+
+  return {
+    score: score / Math.max(0.2, distanceKm || 0.2), // per kilometre, so length can't inflate it
+    pinsNearby: nearbyPins.size,
+    coverage: sampled ? sampledWithData / sampled : 0,
+    safePins,
+    dangerPins,
+  };
+}
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    haversine, minDistanceToPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph,
+    haversine, minDistanceToPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore,
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
   };
 }

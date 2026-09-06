@@ -210,6 +210,72 @@ check('decodePolyline: empty input yields no points rather than throwing', () =>
 });
 
 // ---------------------------------------------------------------------------
+// routeSafetyScore — the maths behind the app's headline claim, "safest route"
+//
+// Each case below is a bug the previous scoring actually had. They all pushed the
+// same way: towards calling a route safest when it was not.
+// ---------------------------------------------------------------------------
+const line = (lat0, lng0, n, step) => Array.from({ length: n }, (_, i) => [lat0 + i * step, lng0]);
+const pin = (lat, lng, safe, danger) => ({ id: 'p' + lat + lng + safe + danger, lat, lng, safe, danger });
+
+check('routeSafetyScore: one heavily-voted pin does not outweigh several corroborating ones', () => {
+  // Old scoring summed raw votes: a single 20-safe pin scored +20 against three 3-safe pins at +9,
+  // so one popular pin decided the whole comparison on volume alone.
+  const a = geo.routeSafetyScore(line(59.90, 10.75, 20, 0.0002), 0.45, [pin(59.9010, 10.75, 20, 0)]);
+  const b = geo.routeSafetyScore(line(59.92, 10.75, 20, 0.0002), 0.45,
+    [pin(59.9210, 10.75, 3, 0), pin(59.9215, 10.75, 3, 0), pin(59.9205, 10.75, 3, 0)]);
+  ok(b.score > a.score, 'three corroborating pins should beat one loud pin, got ' + b.score + ' vs ' + a.score);
+});
+
+check('routeSafetyScore: length cannot inflate the score', () => {
+  // Same safety density, one route four times longer. Old scoring rewarded the longer one.
+  const ps = [pin(59.9008, 10.75, 4, 0), pin(59.9030, 10.75, 4, 0), pin(59.9050, 10.75, 4, 0), pin(59.9070, 10.75, 4, 0)];
+  const shortR = geo.routeSafetyScore(line(59.90, 10.75, 10, 0.0002), 0.2, ps);
+  const longR = geo.routeSafetyScore(line(59.90, 10.75, 40, 0.0002), 0.8, ps);
+  ok(longR.score <= shortR.score + 0.01, 'longer route must not score higher: ' + longR.score + ' vs ' + shortR.score);
+});
+
+check('routeSafetyScore: no reports is not the same as safe', () => {
+  // The worst failure available to this app: presenting absence of evidence as evidence of safety.
+  const r = geo.routeSafetyScore(line(59.90, 10.75, 20, 0.0002), 0.45, []);
+  eq(r.score, 0);
+  eq(r.pinsNearby, 0);
+  eq(r.coverage, 0, 'coverage must be zero so the UI can say "nobody knows" rather than "safe"');
+});
+
+check('routeSafetyScore: a route with an unsafe report ranks below one with nothing', () => {
+  const route = line(59.90, 10.75, 20, 0.0002);
+  const withDanger = geo.routeSafetyScore(route, 0.45, [pin(59.9010, 10.75, 0, 5)]);
+  const unknown = geo.routeSafetyScore(route, 0.45, []);
+  ok(withDanger.score < unknown.score, 'a reported-unsafe route must rank worse than an unrated one');
+  eq(withDanger.dangerPins, 1);
+});
+
+check('routeSafetyScore: danger is weighted more heavily than safety', () => {
+  // Ignoring a real danger costs far more than avoiding a street that turned out to be fine.
+  const route = line(59.90, 10.75, 20, 0.0002);
+  const allSafe = geo.routeSafetyScore(route, 0.45, [pin(59.9010, 10.75, 4, 0)]);
+  const allDanger = geo.routeSafetyScore(route, 0.45, [pin(59.9010, 10.75, 0, 4)]);
+  ok(Math.abs(allDanger.score) > Math.abs(allSafe.score),
+     'an equally-strong warning must move the score further than a reassurance');
+});
+
+check('routeSafetyScore: confidence scales with how many people voted', () => {
+  const route = line(59.90, 10.75, 20, 0.0002);
+  const one = geo.routeSafetyScore(route, 0.45, [pin(59.9010, 10.75, 1, 0)]);
+  const many = geo.routeSafetyScore(route, 0.45, [pin(59.9010, 10.75, 8, 0)]);
+  ok(many.score > one.score, 'a well-attested pin should count for more than a single vote');
+});
+
+check('routeSafetyScore: a marked street counts along its whole length, not just its midpoint', () => {
+  const street = { id: 's1', lat: 59.9145, lng: 10.75, safe: 0, danger: 4,
+                   paths: [[[59.910, 10.75], [59.9145, 10.75], [59.919, 10.75]]] };
+  // A route passing only the far END of the street must still see the warning.
+  const r = geo.routeSafetyScore(line(59.9188, 10.7502, 6, 0.00005), 0.05, [street]);
+  eq(r.dangerPins, 1, "the street's danger must register at its end, not only at its centre");
+});
+
+// ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
   failures.forEach((f) => console.error(`  FAIL  ${f}\n`));
