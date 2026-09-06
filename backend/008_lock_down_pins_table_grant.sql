@@ -1,0 +1,31 @@
+-- SafeWalk — migration 008: stop the raw pins table from leaking user_id
+--
+-- The hole: migration 003 rebuilt pins_with_scores to publish is_mine instead of user_id, and the
+-- client only ever reads pins through that view. But nothing ever restricted direct access to the
+-- pins table itself, and pins_read ("select using (true)", from schema.sql) leaves every row
+-- visible under Row Level Security. Supabase's project bootstrap grants table-level SELECT on every
+-- public-schema table to anon and authenticated by default (ALTER DEFAULT PRIVILEGES) — the exact
+-- same default-privilege behaviour that let my_standing() answer a signed-out caller before
+-- migration 006, just for a table instead of a function. Nobody ever revoked it for pins, so the
+-- public anon key could still do
+--
+--   GET /rest/v1/pins?select=id,user_id,created_at
+--
+-- and reconstruct precisely the authorship map migration 003 set out to prevent — while
+-- pins_with_scores looked clean the whole time. This is rule 1 in ROADMAP.md: grouping pins by
+-- author reconstructs where an individual walks and when.
+--
+-- The fix is a column-level grant. The client never selects from pins directly — every read goes
+-- through pins_with_scores / pins_near, and the only direct-table read it performs is
+-- `.insert(...).select('id')` in persistCreate(), to learn the row's generated id. So authenticated
+-- needs SELECT on id and nothing else; anon needs no direct SELECT on pins at all (writes still go
+-- through the existing insert/update/delete policies, which this migration does not touch).
+--
+-- pins_with_scores and pins_near are unaffected: views run with the owner's rights (see migration
+-- 003's note), so they keep publishing every public column, including to anonymous readers, exactly
+-- as before. Only a direct query against the pins table by anon or authenticated is affected.
+--
+-- Run in Supabase → SQL Editor after 007. Safe to re-run.
+
+revoke select on pins from public, anon, authenticated;
+grant select (id) on pins to authenticated;
