@@ -20,11 +20,21 @@ Valhalla, geocoding is Nominatim, and street geometry comes from Overpass.
 ## Tests
 
 ```bash
-node tests/geo.test.js
+node tests/geo.test.js          # pure maths — no network
+node tests/permissions.test.js  # what the public API key can and cannot do (hits the live database)
 ```
 
 Covers the maths that decides what the app tells you about a street: distances, the street graph and
 its shortest paths, polyline decoding, and the rating bands. Exits non-zero on failure.
+
+`permissions.test.js` is read-only by design: every write it attempts is expected to be refused,
+and it verifies that by reading the data back rather than trusting a status code. A PATCH that
+row-level security filtered to zero rows still returns 204, so status codes alone would have missed
+the bug in migration 013.
+
+It exists because every security bug in this project so far was found by hand, one at a time, and
+three were the same mistake in different places — see the header comment. Each of those requests is
+now written down.
 
 These are deliberately dependency-free. The client has no build step, and a suite that needed one
 would stop being run. They also encode bugs already found in real use — merge idempotency, snapping
