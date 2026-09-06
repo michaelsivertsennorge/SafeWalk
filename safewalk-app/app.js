@@ -1395,26 +1395,64 @@ function wirePinButton(side) {
 wirePinButton('from');
 wirePinButton('to');
 
-function routeSafetyScore(coords) {
-  // coords: [[lat,lng], ...]
+// How safe a route looks, per kilometre, given what people have reported near it.
+//
+// The previous version summed `p.safe - p.danger * 1.5` in raw votes, which was wrong in three
+// ways that all pointed the same direction — towards calling a route "safest" when it wasn't:
+//
+//   1. Raw counts meant one popular pin with 20 safe votes buried every other signal on the route.
+//   2. Nothing was normalised by length, so a long route collected more score simply by being
+//      long. "Safest" could quietly mean "longest".
+//   3. A route with no reports at all scored 0 and could still be badged SAFEST, presenting the
+//      absence of evidence as evidence of safety. For an app someone consults before walking home
+//      alone, that is the worst possible failure mode.
+//
+// Now each pin contributes its *lean* (how one-sided its votes are, -1..+1) scaled by a confidence
+// factor, danger weighted more heavily than safety, and the total is divided by route length.
+// `coverage` reports how much of the route anyone has actually said anything about, so the UI can
+// tell "reported safe" apart from "nobody knows".
+function routeSafetyScore(coords, distanceKm) {
   const nearbyPins = new Set();
   let score = 0;
+  let safePins = 0;
+  let dangerPins = 0;
+  let sampled = 0;
+  let sampledWithData = 0;
+
   const sampleEvery = Math.max(1, Math.floor(coords.length / 40));
   for (let i = 0; i < coords.length; i += sampleEvery) {
     const [lat, lng] = coords[i];
+    sampled++;
+    let anyHere = false;
     pins.forEach((p) => {
-      if (nearbyPins.has(p.id)) return;
-      // A street/area pin's danger zone extends along its whole shape, not just its stored
-      // midpoint — a route passing close to one end of a long marked street must still count.
+      // A street/area pin's zone extends along its whole shape, not just its stored midpoint — a
+      // route passing close to one end of a long marked street must still count.
       const dist = p.paths ? minDistanceToPaths(lat, lng, p.paths) : haversine(lat, lng, p.lat, p.lng);
       const threshold = Math.max(60, p.radius || 0);
-      if (dist <= threshold) {
-        nearbyPins.add(p.id);
-        score += p.safe - p.danger * 1.5;
-      }
+      if (dist > threshold) return;
+      anyHere = true;
+      if (nearbyPins.has(p.id)) return;
+      nearbyPins.add(p.id);
+
+      const total = p.safe + p.danger;
+      if (!total) return;
+      const lean = (p.safe / total - 0.5) * 2;          // -1 (all unsafe) .. +1 (all safe)
+      const confidence = Math.min(1, total / 4);         // one lone vote is not four votes
+      // A warning deserves more weight than a reassurance here: the cost of ignoring a real danger
+      // is far higher than the cost of avoiding a street that turned out to be fine.
+      score += (lean < 0 ? lean * 1.5 : lean) * confidence;
+      if (lean < 0) dangerPins++; else safePins++;
     });
+    if (anyHere) sampledWithData++;
   }
-  return { score, pinsNearby: nearbyPins.size };
+
+  return {
+    score: score / Math.max(0.2, distanceKm || 0.2), // per kilometre, so length can't inflate it
+    pinsNearby: nearbyPins.size,
+    coverage: sampled ? sampledWithData / sampled : 0,
+    safePins,
+    dangerPins,
+  };
 }
 
 // Decodes a Valhalla-encoded polyline (Google polyline algorithm, 6-decimal precision) into [lat,lng] pairs.
@@ -1593,12 +1631,24 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     const trips = [data.trip, ...(data.alternates || []).map((a) => a.trip)];
     const scored = trips.map((trip) => {
       const coords = trip.legs.flatMap((leg) => decodePolyline(leg.shape, 6));
-      const { score, pinsNearby } = routeSafetyScore(coords);
-      return { coords, distanceKm: trip.summary.length, durationSec: trip.summary.time, score, pinsNearby };
+      const distanceKm = trip.summary.length;
+      return { coords, distanceKm, durationSec: trip.summary.time, ...routeSafetyScore(coords, distanceKm) };
     });
     scored.sort((a, b) => b.score - a.score);
 
-    status.textContent = `${scored.length} route${scored.length > 1 ? 's' : ''} compared using ${pins.length} community report${pins.length === 1 ? '' : 's'}.`;
+    // Only claim one route is safer than another when the reports actually say so. Two routes with
+    // no data are not "one safest, one not" — they are both unknown, and saying otherwise would
+    // dress a coin flip up as advice.
+    const best = scored[0];
+    const worst = scored[scored.length - 1];
+    const haveEvidence = best.pinsNearby > 0 && (scored.length === 1 || best.score - worst.score > 0.15);
+
+    status.textContent = haveEvidence
+      ? `${scored.length} route${scored.length > 1 ? 's' : ''} compared using ${pins.length} community report${pins.length === 1 ? '' : 's'}.`
+      : pins.length
+        ? 'No reports along these routes yet — they are ranked by distance only.'
+        : 'Nobody has rated streets around here yet, so these routes are ranked by distance only.';
+    if (!haveEvidence) scored.sort((a, b) => a.distanceKm - b.distanceKm);
 
     const entries = [];
     scored.forEach((r, rank) => {
@@ -1607,14 +1657,25 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
 
       const mins = Math.round(r.durationSec / 60);
       const km = r.distanceKm.toFixed(2);
+      // "SAFEST" is a claim about evidence. Without it, the honest label is "shortest".
+      const badge = !isBest ? ''
+        : haveEvidence ? '<span class="route-badge">SAFEST</span>'
+        : '<span class="route-badge route-badge-plain">SHORTEST</span>';
+      const reported = r.pinsNearby
+        ? `${r.pinsNearby} report${r.pinsNearby === 1 ? '' : 's'} near ${Math.round(r.coverage * 100)}% of it`
+        : 'no reports along it yet';
+      const warn = r.dangerPins
+        ? `<div class="route-warn">⚠ ${r.dangerPins} spot${r.dangerPins === 1 ? '' : 's'} on this route reported unsafe</div>`
+        : '';
       const card = document.createElement('div');
       card.className = 'route-card';
       card.innerHTML = `
         <div class="route-card-top">
           <span>Route ${rank + 1}</span>
-          ${isBest ? '<span class="route-badge">SAFEST</span>' : ''}
+          ${badge}
         </div>
-        <div class="route-meta">${km} km · ~${mins} min ${modeLabel} · ${r.pinsNearby} nearby report${r.pinsNearby === 1 ? '' : 's'}</div>
+        <div class="route-meta">${km} km · ~${mins} min ${modeLabel} · ${reported}</div>
+        ${warn}
       `;
       const statusLabel = document.createElement('div');
       statusLabel.className = 'route-status-label';
