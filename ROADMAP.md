@@ -60,6 +60,9 @@ a control, and enlarging it would put a tap target over the map.
 
 ## Known weak points worth attacking
 
+- **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
+  `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
+
 - **Third-party APIs have no SLA.** Overpass, Valhalla, Nominatim and NVDB can all be slow or down.
   Failure paths exist but are thin; a slow Overpass currently just makes the street picker feel
   broken.
