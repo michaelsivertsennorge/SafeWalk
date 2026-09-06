@@ -2502,16 +2502,41 @@ function hideStaleBanner() {
   if (el) el.hidden = true;
 }
 
-async function refreshPinsFromCloud() {
+// How much of the map to pull down at once. The old query was `select * from pins_with_scores`
+// with no geographic filter, which downloads every pin in the country on every app open. That is
+// invisible at two rows and ruinous at a city's worth — megabytes over mobile data, to someone
+// walking home. pins_near has existed since migration 004 for exactly this and was never called.
+//
+// 5km is generous for a walk while still bounding the payload, and the refetch threshold is well
+// inside it so panning never reveals an empty edge before the next fetch lands.
+const PIN_FETCH_RADIUS_M = 5000;
+const PIN_REFETCH_AFTER_M = 2000;
+let lastPinFetchAt = null; // { lat, lng }
+
+function pinFetchCentre() {
+  // Prefer the person's actual position; fall back to whatever they are looking at.
+  if (userLocation) return userLocation;
+  const c = map.getCenter();
+  return { lat: c.lat, lng: c.lng };
+}
+
+async function refreshPinsFromCloud({ force = false } = {}) {
   if (!sb) return;
-  const [{ data: rows, error }, { data: myVotes }] = await Promise.all([
-    sb.from('pins_with_scores').select('*'),
-    currentUser
-      ? sb.from('votes').select('pin_id').eq('user_id', currentUser.id)
-      : Promise.resolve({ data: [] }),
+  const centre = pinFetchCentre();
+  if (!force && lastPinFetchAt &&
+      haversine(centre.lat, centre.lng, lastPinFetchAt.lat, lastPinFetchAt.lng) < PIN_REFETCH_AFTER_M) {
+    return; // still well inside what we already have
+  }
+
+  const [nearby, own, votes] = await Promise.all([
+    sb.rpc('pins_near', { p_lat: centre.lat, p_lng: centre.lng, p_radius_m: PIN_FETCH_RADIUS_M }),
+    // Your own marks come along regardless of distance, or "My reports & marks" would quietly lose
+    // anything you rated in another town. Bounded by one person's activity, so it stays small.
+    currentUser ? sb.from('pins_with_scores').select('*').eq('is_mine', true) : Promise.resolve({ data: [] }),
+    currentUser ? sb.from('votes').select('pin_id').eq('user_id', currentUser.id) : Promise.resolve({ data: [] }),
   ]);
 
-  if (error) {
+  if (nearby.error) {
     // Fall back to whatever we last saw rather than showing an empty map, which would read as
     // "nothing has been reported here" — the opposite of the truth.
     const cached = loadCachedPins();
@@ -2527,12 +2552,20 @@ async function refreshPinsFromCloud() {
   }
 
   hideStaleBanner();
-  const votedIds = new Set((myVotes || []).map((v) => v.pin_id));
-  pins = (rows || []).map((r) => rowToPin(r, votedIds));
-  cachePins(rows || []);
+  lastPinFetchAt = centre;
+  const votedIds = new Set((votes.data || []).map((v) => v.pin_id));
+  const byId = new Map();
+  [...(nearby.data || []), ...(own.data || [])].forEach((r) => byId.set(r.id, r));
+  const rows = [...byId.values()];
+  pins = rows.map((r) => rowToPin(r, votedIds));
+  cachePins(rows);
   renderPins();
   renderMyReports();
 }
+
+// Panning far enough should bring in that area's ratings; the distance guard above means this is
+// cheap to call on every move.
+map.on('moveend', () => { refreshPinsFromCloud(); });
 
 // Every mutation goes through these. They're only reached past requireAccount(), so an unsigned
 // call is a bug rather than a state to handle gracefully — hence the hard guard.
@@ -2601,7 +2634,9 @@ if (sb) {
   sb.auth.onAuthStateChange(async (_event, session) => {
     currentUser = session ? session.user : null;
     renderAccountState();
-    await refreshPinsFromCloud();
+    // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
+    // though the location has not moved.
+    await refreshPinsFromCloud({ force: true });
     refreshStanding();
   });
 }
@@ -2691,9 +2726,8 @@ window.addEventListener("offline", () => {
 // Coming back online should not require a reload to get current data again.
 window.addEventListener("online", () => {
   showToast("Back online — refreshing ratings.");
-  refreshPinsFromCloud();
+  refreshPinsFromCloud({ force: true });
 });
-window.addEventListener('online', () => showToast('Back online.'));
 
 // Keep userLocation fresh in the background so the 1km rating-proximity check
 // (and the SOS/route "my location" flows) reflect where the person actually is,
