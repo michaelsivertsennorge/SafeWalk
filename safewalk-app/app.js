@@ -96,17 +96,71 @@ const UNWALKABLE = new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 
 // met at one junction it picked whichever endpoint was marginally nearest — which is how a drag
 // ended up on the wrong street. With a real graph, "which streets connect here" is simply a fact
 // about the data instead of a guess.
-async function fetchStreetNetwork(lat, lng, radius = 700) {
-  const query = `[out:json][timeout:25];way(around:${radius},${lat},${lng})[highway][name];out geom;`;
-  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const res = await fetchWithTimeout(url, {}, 20000);
-  if (!res) return null;
-  const data = await res.json();
-  const ways = (data.elements || []).filter(
-    (el) => el.type === 'way' && el.geometry && el.tags && el.tags.name && !UNWALKABLE.has(el.tags.highway)
-  );
-  if (!ways.length) return null;
-  return buildStreetGraph(ways);
+// Overpass is free and has no SLA, and its main mirror really does fall over: measured here, the
+// same query returned 200 in 8.6s once and a 504 fourteen seconds later. So we ask several mirrors
+// at once and take the first that actually answers, rather than waiting out a dead one.
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+// Radius dominates the cost, roughly quadratically. Measured in central Oslo: 300m came back in
+// 2.0s and 25KB; 700m took 14.4s and then failed outright. So the picker opens on a small fast
+// fetch and quietly widens afterwards — see startStreetPicker.
+const NEAR_RADIUS_M = 350;
+const WIDE_RADIUS_M = 900;
+
+const streetNetworkCache = new Map(); // "lat,lng,radius" (rounded) -> ways
+
+function overpassQuery(lat, lng, radius) {
+  // Filtering unwalkable roads in the query rather than after it keeps the payload down; there is
+  // no point downloading a motorway we would only throw away.
+  const excluded = [...UNWALKABLE].join('|');
+  return `[out:json][timeout:25];way(around:${radius},${lat},${lng})[highway][name][highway!~"^(${excluded})$"];out geom;`;
+}
+
+async function fetchOverpassWays(lat, lng, radius) {
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)},${radius}`;
+  if (streetNetworkCache.has(key)) return streetNetworkCache.get(key);
+
+  const query = overpassQuery(lat, lng, radius);
+  const attempt = async (base) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch(`${base}?data=${encodeURIComponent(query)}`, { signal: controller.signal });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json(); // a rate-limited mirror answers with XML, so this throws too
+      const ways = (data.elements || []).filter(
+        (el) => el.type === 'way' && el.geometry && el.tags && el.tags.name && !UNWALKABLE.has(el.tags.highway)
+      );
+      if (!ways.length) throw new Error('empty');
+      return ways;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    // Promise.any settles on the first mirror that succeeds and ignores the ones still struggling.
+    const ways = await Promise.any(OVERPASS_MIRRORS.map(attempt));
+    streetNetworkCache.set(key, ways);
+    return ways;
+  } catch {
+    return null; // every mirror failed
+  }
+}
+
+async function fetchStreetNetwork(lat, lng, radius = NEAR_RADIUS_M) {
+  const ways = await fetchOverpassWays(lat, lng, radius);
+  return ways ? buildStreetGraph(ways) : null;
+}
+
+// Warms the cache before the user asks. Opening the report sheet is a strong hint that "Street" may
+// be tapped next, and starting the fetch there usually means it has already landed by the time it
+// is needed. Failures are ignored on purpose — this is a guess, not a request.
+function prefetchStreetNetwork(lat, lng) {
+  fetchOverpassWays(lat, lng, NEAR_RADIUS_M).catch(() => {});
 }
 
 // Nodes are keyed by exact coordinate. OpenStreetMap shares the identical node between ways that
@@ -115,13 +169,28 @@ async function fetchStreetNetwork(lat, lng, radius = 700) {
 const nodeKey = (lat, lng) => `${lat.toFixed(7)},${lng.toFixed(7)}`;
 
 function buildStreetGraph(ways) {
-  const nodes = new Map(); // key -> { lat, lng, edges: [{ to, dist, name }] }
+  const graph = { nodes: new Map(), wayIds: new Set() };
+  mergeWaysIntoGraph(graph, ways);
+  return graph;
+}
+
+// Adds ways to an existing graph. Used by the background widen: the picker stays usable on the
+// small fast network while the larger one arrives and is folded in underneath, with no rebuild and
+// no loss of whatever the user has already tapped.
+function mergeWaysIntoGraph(graph, ways) {
+  const nodes = graph.nodes;
   const touch = (lat, lng) => {
     const k = nodeKey(lat, lng);
     if (!nodes.has(k)) nodes.set(k, { lat, lng, edges: [] });
     return k;
   };
+  let added = 0;
   ways.forEach((w) => {
+    if (w.id != null) {
+      if (graph.wayIds.has(w.id)) return; // already merged; re-adding would duplicate every edge
+      graph.wayIds.add(w.id);
+    }
+    added++;
     const name = w.tags.name;
     for (let i = 1; i < w.geometry.length; i++) {
       const a = w.geometry[i - 1];
@@ -135,17 +204,37 @@ function buildStreetGraph(ways) {
       nodes.get(kb).edges.push({ to: ka, dist: d, name });
     }
   });
-  return { nodes };
+  return added;
 }
 
-function nearestGraphNode(graph, lat, lng, maxDist = 80) {
+function nearestGraphNode(graph, lat, lng, maxDist = 80, allowed = null) {
   let bestKey = null;
   let bestDist = Infinity;
   graph.nodes.forEach((n, k) => {
+    if (allowed && !allowed.has(k)) return;
     const d = haversine(lat, lng, n.lat, n.lng);
     if (d < bestDist) { bestDist = d; bestKey = k; }
   });
   return bestDist <= maxDist ? bestKey : null;
+}
+
+// Every node walkable from `key`. Overpass cuts ways at the edge of the query circle, so a chunk of
+// what it returns is stranded: measured here, 12% of nodes sat in 12 fragments disconnected from
+// the main network. Snapping a tap to the nearest node overall could therefore land on a street
+// that is unreachable, and the user would get "can't reach that" while looking at a map where the
+// two streets plainly join. Restricting the snap to reachable nodes avoids the whole class of
+// confusing failure.
+function reachableFrom(graph, key) {
+  const seen = new Set([key]);
+  const stack = [key];
+  while (stack.length) {
+    const node = graph.nodes.get(stack.pop());
+    if (!node) continue;
+    node.edges.forEach((e) => {
+      if (!seen.has(e.to)) { seen.add(e.to); stack.push(e.to); }
+    });
+  }
+  return seen;
 }
 
 // Plain Dijkstra. These graphs are a few hundred nodes, so a sorted-array frontier is quicker in
@@ -687,6 +776,8 @@ function openReportSheet() {
       ? `Marking an area ~${pendingRadius}m across, near ${pendingPoint.lat.toFixed(5)}, ${pendingPoint.lng.toFixed(5)}`
       : `${pendingPoint.lat.toFixed(5)}, ${pendingPoint.lng.toFixed(5)}`
     : '';
+  // Head start: if they tap "Street" next, the network is usually already in the cache.
+  if (pendingPoint) prefetchStreetNetwork(pendingPoint.lat, pendingPoint.lng);
   openSheet('reportSheet');
 }
 
@@ -707,7 +798,9 @@ document.querySelectorAll('#reportShapeToggle .mode-btn').forEach((btn) => {
     // pendingPoint may have changed (sheet closed/reopened) while this was in flight
     if (!document.getElementById('reportSheet').classList.contains('open')) return;
     if (!graph) {
-      streetLookupStatus.textContent = "Couldn't find named streets here — try a spot closer to a road.";
+      // Don't blame the location for what is usually an overloaded map server — that message sent
+      // people hunting for a different spot when the real answer was "try again in a moment".
+      streetLookupStatus.textContent = "The street map service isn't responding right now. Try again in a moment, or mark this as a spot instead.";
       reportShape = 'spot';
       setReportShapeButtons('spot');
       return;
@@ -754,8 +847,9 @@ function redrawTrimActive() {
   const hint = document.getElementById('trimHint');
   const undoBtn = document.getElementById('trimUndoBtn');
   const doneBtn = document.getElementById('trimDoneBtn');
+  const loading = trimState.widened ? '' : ' · loading more streets…';
   if (!waypoints.length) {
-    hint.textContent = 'Tap where the stretch starts.';
+    hint.textContent = 'Tap where the stretch starts.' + loading;
   } else if (waypoints.length < 2) {
     hint.textContent = 'Now tap where the stretch ends. Keep tapping to run it through more streets.';
   } else {
@@ -769,6 +863,16 @@ function redrawTrimActive() {
 // Tap the start, tap the end, keep tapping. Each tap routes through the real street graph from the
 // last point, so a chain can turn corners, run several streets in a row and double back — the maze
 // behaviour that dragging two handles could never express.
+// Pulls in the wider network behind the picker. The user can already be tapping while this runs;
+// merging only adds streets, so nothing they have chosen is disturbed.
+async function widenStreetNetwork(lat, lng) {
+  const ways = await fetchOverpassWays(lat, lng, WIDE_RADIUS_M);
+  if (!ways || !trimState) return;           // picker closed while we waited
+  const added = mergeWaysIntoGraph(trimState.graph, ways);
+  trimState.widened = true;
+  if (added) redrawTrimActive();
+}
+
 function startStreetPicker(graph, seedLat, seedLng, existingPath) {
   closeSheets();
   const activeLine = L.polyline([], { color: token('--accent', '#8b7bff'), weight: 7, opacity: 0.95, interactive: false }).addTo(map);
@@ -798,6 +902,8 @@ function startStreetPicker(graph, seedLat, seedLng, existingPath) {
   redrawTrimActive();
   if (trimState.path.length) map.fitBounds(activeLine.getBounds(), { padding: [70, 70] });
   document.getElementById('trimPanel').hidden = false;
+  // Start widening now; the picker is already usable on the near network.
+  if (seedLat != null) widenStreetNetwork(seedLat, seedLng);
 }
 
 // Routes from the last waypoint to `key` and appends that leg. Returns false if the streets don't
@@ -823,9 +929,26 @@ function addWaypoint(key) {
 
 // A tap while the picker is open: snap to the nearest street node and extend the chain.
 function handleStreetPick(lat, lng) {
-  const key = nearestGraphNode(trimState.graph, lat, lng, 60);
+  const anchor = trimState.waypoints[trimState.waypoints.length - 1];
+
+  // Once a start point exists, only snap to streets actually walkable from it. Recomputed whenever
+  // the anchor changes or the background widen merges new streets in.
+  if (anchor && (trimState.reachAnchor !== anchor || !trimState.reach || trimState.reachWays !== trimState.graph.wayIds.size)) {
+    trimState.reach = reachableFrom(trimState.graph, anchor);
+    trimState.reachAnchor = anchor;
+    trimState.reachWays = trimState.graph.wayIds.size;
+  }
+
+  // Widen the snap radius when restricted, so a tap near a stranded fragment still finds the real
+  // street behind it rather than giving up.
+  const key = anchor
+    ? nearestGraphNode(trimState.graph, lat, lng, 90, trimState.reach)
+    : nearestGraphNode(trimState.graph, lat, lng, 60);
+
   if (!key) {
-    showToast('No street there — tap closer to a road.');
+    showToast(anchor
+      ? 'No connected street there — tap somewhere along a road you could walk to.'
+      : 'No street there — tap closer to a road.');
     return;
   }
   if (!trimState.waypoints.length) {
@@ -1587,14 +1710,16 @@ function refreshMapChrome() {
   }
 }
 
-document.getElementById('settingsBtn').addEventListener('click', () => {
+function openMyPage() {
   cancelPicking();
   renderContacts();
   applyDarkMapPref();
   renderThemePicker();
   refreshStanding();
   openSheet('settingsSheet');
-});
+}
+// Reachable from the bottom bar, where a thumb actually lands on a phone.
+document.getElementById('myPageBtn').addEventListener('click', openMyPage);
 
 // Only one emergency contact — SOS calls them directly, so there's no list to manage, just
 // "who is it" and a way to replace them.

@@ -17,12 +17,10 @@
 
   <header class="topbar">
     <div class="brand"><span class="brand-icon">🌙</span> SafeWalk</div>
-    <button id="settingsBtn" class="icon-btn" aria-label="My Page" title="My Page">👤</button>
+    <button class="legend-toggle" id="legendToggleBtn" aria-expanded="false" aria-controls="legendPanel">Map key</button>
   </header>
 
   <div id="map"></div>
-
-  <button class="legend-toggle" id="legendToggleBtn" aria-expanded="false" aria-controls="legendPanel">ℹ️ Map key</button>
   <div class="legend-panel" id="legendPanel" hidden>
     <div class="legend-row"><span class="legend-swatch"></span>Lit streets (official data)</div>
     <div class="legend-row"><span class="legend-line line-safe"></span>&gt;75% safe (solid)</div>
@@ -56,10 +54,13 @@
 
   <nav class="bottom-bar">
     <button class="bb-btn" id="routeBtn">
-      <span class="bb-icon">🧭</span><span>Safe Route</span>
+      <span class="bb-icon" aria-hidden="true">🧭</span><span>Safe route</span>
     </button>
-    <button class="bb-btn bb-sos" id="sosBtn">
-      <span class="bb-icon">🆘</span><span>SOS</span>
+    <button class="bb-btn bb-sos" id="sosBtn" aria-label="Emergency: call your contact">
+      <span class="bb-icon" aria-hidden="true">🆘</span><span>SOS</span>
+    </button>
+    <button class="bb-btn" id="myPageBtn">
+      <span class="bb-icon" aria-hidden="true">👤</span><span>My page</span>
     </button>
   </nav>
 

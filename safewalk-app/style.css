@@ -114,6 +114,12 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute only sets `display: none` at the very bottom of the cascade, so any rule
+   that gives an element a display value silently defeats it. That is not theoretical: .legend-panel
+   is display:flex, so the map key was permanently on screen and its toggle button did nothing at
+   all. Make `hidden` mean hidden, everywhere, once. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -180,7 +186,7 @@ html, body {
 
 .map-hint {
   position: absolute;
-  top: 64px;
+  top: 60px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 400;
@@ -196,32 +202,37 @@ html, body {
 }
 .map-hint.hidden { opacity: 0; }
 
+/* Docked in the header rather than floating over the map: it used to sit 64px down and its panel
+   another 36px below that, eating the top of the map. Here it costs no vertical space at all. */
 .legend-toggle {
-  position: absolute;
-  top: 64px;
-  left: 14px;
-  z-index: 400;
-  background: rgba(var(--scrim-elev), 0.9);
+  background: rgba(var(--scrim-elev), 0.85);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 11px;
-  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
   border-radius: 999px;
+  margin-left: auto;
+  margin-right: 8px;
+  white-space: nowrap;
 }
+.legend-toggle[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+
 .legend-panel {
   position: absolute;
-  top: 100px;
-  left: 14px;
+  top: 52px;
+  right: 12px;
   z-index: 400;
-  background: rgba(var(--scrim-elev), 0.94);
+  background: rgba(var(--scrim-elev), 0.96);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 11px;
-  padding: 10px 12px;
+  font-size: 10.5px;
+  padding: 8px 10px;
   border-radius: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 .legend-row { display: flex; align-items: center; gap: 6px; }
 .legend-swatch {
@@ -296,12 +307,16 @@ html, body {
   z-index: 500;
   display: flex;
   align-items: flex-end;
-  justify-content: space-around;
+  justify-content: center;
+  gap: 14px;
   padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
   background: linear-gradient(0deg, rgba(var(--scrim),0.98), rgba(var(--scrim),0.85));
   border-top: 1px solid var(--border);
 }
 
+/* The two side buttons become real pills with their own surface, so the bar reads as controls
+   rather than floating labels, and each target clears 44px. SOS keeps its own circular treatment
+   below — it should not look like its neighbours. */
 .bb-btn {
   background: transparent;
   border: none;
@@ -313,7 +328,22 @@ html, body {
   font-size: 11px;
   padding: 4px 10px;
 }
-.bb-icon { font-size: 20px; }
+.bb-btn:not(.bb-sos) {
+  flex: 1;
+  max-width: 128px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 9px 8px;
+  min-height: 54px;
+  transition: transform 0.12s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.bb-btn:not(.bb-sos):active { transform: scale(0.96); }
+.bb-btn:not(.bb-sos):hover { border-color: var(--accent); color: var(--text); }
+.bb-icon { font-size: 19px; line-height: 1; }
 
 .bb-sos {
   background: var(--danger-strong);
