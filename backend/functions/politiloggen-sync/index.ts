@@ -5,22 +5,29 @@
 // Runs server-side for two reasons: Politiloggen blocks CORS, and writing to police_events needs
 // the service role. Clients only ever read that table.
 //
-// Three judgements do most of the work here, all of them measured rather than assumed.
+// Four judgements do most of the work, all measured rather than assumed.
 //
 // 1. WHICH INCIDENTS COUNT. Politiloggen is mostly traffic and fires. Across 50 Oslo messages:
 //    21 Trafikk, 13 Brann, 6 Savnet, 5 Andre hendelser, 3 Voldshendelse, 2 Ro og orden. A car
 //    crash does not make a street unsafe to walk down, and painting the map red for one would
 //    bury the incidents that do. Only categories bearing on personal safety on foot are mirrored.
 //
-// 2. WHERE IT HAPPENED. Only a municipality and a free-text area are given, never coordinates.
-//    Geocoding that text is unreliable in a way that matters — "Fuglevik, Råde" once resolved to
-//    Kristiansand, 230 km away — so every result is checked against the municipality the police
-//    stated, and anything that disagrees is dropped rather than guessed.
+// 2. WHERE IT HAPPENED. The structured `area` field is often a whole district: "Gamlebyen"
+//    geocodes to a 2.5km circle. But the officer writing the free text usually names the actual
+//    street, so the text is mined for one first. Measured on real data: the same Gamlebyen
+//    incident goes from a 2488m blob to a 120m road once "Valhallveien" is pulled out of the text.
 //
-// 3. HOW PRECISELY. Measured bounding boxes: "Skullerud" ~1.1km, "Sentrum" ~2.3km, "Filipstad"
-//    ~4.4km. Drawing those as identical dots would invent a corner the police never named. The
-//    radius is stored so the map can show the area actually described. Anything vaguer than
-//    MAX_RADIUS_M is not worth showing at all.
+// 3. WHETHER TO TRUST THE GEOCODE. Free text is unreliable in a way that matters — "Fuglevik,
+//    Råde" once resolved to Kristiansand, 230 km away. Every result is checked against the
+//    municipality the police stated, street lookups must actually resolve to a road, and anything
+//    vaguer than MAX_RADIUS_M is dropped rather than drawn as a misleading blob.
+//
+// 4. HOW LONG IT MATTERS. Politiloggen says whether an operation is still running. An ongoing one
+//    stays up; a finished one is history within a few hours. Expiry is measured from when the
+//    incident happened, not from when we synced it — otherwise the hourly cron keeps renewing an
+//    old incident's lease and it never disappears. Anything already past its expiry is skipped
+//    before geocoding, because geocode budget is the scarce resource and spending it on stale
+//    reports starves the fresh ones.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -30,12 +37,21 @@ const UA = 'SafeWalk/1.0 (neighbourhood safety map; github.com/michaelsivertsenn
 
 // Nominatim's usage policy: at most 1 request/second, with an identifying User-Agent.
 const GEOCODE_DELAY_MS = 1100;
-const MAX_GEOCODES_PER_RUN = 15;
-const DEFAULT_TTL_HOURS = 12;
-const MIN_RADIUS_M = 120;   // even a precise result is not accurate to the metre
-const MAX_RADIUS_M = 2500;  // vaguer than this and the circle covers half a city: show nothing
+const MAX_GEOCODES_PER_RUN = 20;
+
+// See judgement 4. Ongoing operations persist; finished ones fade quickly.
+const ACTIVE_TTL_HOURS = 24;    // safety net: if the feed stalls, nothing sticks around past a day
+const RESOLVED_TTL_HOURS = 6;   // long enough to still matter on tonight's walk home
+
+const MIN_RADIUS_M = 120;       // even a precise result is not accurate to the metre
+const MAX_RADIUS_M = 2500;      // vaguer than this and the circle covers half a city
 
 const RELEVANT_CATEGORIES = new Set(['voldshendelse', 'ro og orden']);
+
+// Norwegian street-name endings. Deliberately conservative: a false street is worse than none,
+// because it moves the warning somewhere the police never mentioned.
+const STREET_SUFFIXES = 'veien|vegen|gata|gaten|gate|vei|plassen|stien|bakken|brua|broen|alleen|alléen|torget|kaia|svingen|løkka|parken';
+const STREET_RE = new RegExp(`\b([A-ZÆØÅ][a-zæøåA-ZÆØÅ-]*(?:${STREET_SUFFIXES}))\b`, 'g');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const CORS = {
@@ -55,6 +71,8 @@ type Candidate = {
   lng?: number;
   radius_m?: number;
   precision_label?: string;
+  located_by?: string;
+  street_guess?: string | null;
   rejected?: string;
 };
 
@@ -72,13 +90,21 @@ function metresBetween(aLat: number, aLng: number, bLat: number, bLng: number) {
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-async function geocodeInMunicipality(area: string, municipality: string) {
-  const q = `${area}, ${municipality}, Norway`;
-  const url = `${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=1&countrycodes=no&addressdetails=1`;
+function extractStreet(text: string | null): string | null {
+  if (!text) return null;
+  STREET_RE.lastIndex = 0;
+  const found = [...text.matchAll(STREET_RE)].map((m) => m[1]);
+  return found.length ? found[0] : null;
+}
+
+type GeoHit = { lat: number; lng: number; radius_m: number; precision_label: string; isRoad: boolean };
+
+async function geocode(query: string, municipality: string): Promise<{ ok: true; hit: GeoHit } | { ok: false; why: string }> {
+  const url = `${NOMINATIM}?q=${encodeURIComponent(query)}&format=jsonv2&limit=1&countrycodes=no&addressdetails=1`;
   const res = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': UA } });
-  if (!res.ok) return { ok: false as const, why: `nominatim ${res.status}` };
+  if (!res.ok) return { ok: false, why: `nominatim ${res.status}` };
   const hits = await res.json();
-  if (!Array.isArray(hits) || !hits.length) return { ok: false as const, why: 'no geocode result' };
+  if (!Array.isArray(hits) || !hits.length) return { ok: false, why: 'no result' };
 
   const hit = hits[0];
   const a = hit.address || {};
@@ -86,26 +112,57 @@ async function geocodeInMunicipality(area: string, municipality: string) {
     .filter(Boolean).map((s: string) => String(s).toLowerCase());
   const want = municipality.toLowerCase();
   // Substring either way: OSM says "Oslo kommune" where the police say "Oslo".
-  const agrees = claimed.some((c: string) => c.includes(want) || want.includes(c));
-  if (!agrees) return { ok: false as const, why: `resolved to ${claimed.join('/') || 'unknown'}, not ${municipality}` };
+  if (!claimed.some((c: string) => c.includes(want) || want.includes(c))) {
+    return { ok: false, why: `resolved to ${claimed.join('/') || 'unknown'}, not ${municipality}` };
+  }
 
-  // Half the bounding-box diagonal: the incident is somewhere in that area, not at its centre.
   const bb = (hit.boundingbox || []).map(Number);
   let radius = MIN_RADIUS_M;
   if (bb.length === 4 && bb.every((n: number) => Number.isFinite(n))) {
     radius = Math.round(metresBetween(bb[0], bb[2], bb[1], bb[3]) / 2);
   }
   radius = Math.max(MIN_RADIUS_M, radius);
-  if (radius > MAX_RADIUS_M) {
-    return { ok: false as const, why: `too vague: "${area}" covers about ${Math.round(radius / 100) / 10}km` };
+
+  const label = hit.addresstype || hit.type || 'unknown';
+  const isRoad = hit.category === 'highway' || ['road', 'residential', 'street', 'highway'].includes(String(label));
+  return { ok: true, hit: { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon), radius_m: radius, precision_label: label, isRoad } };
+}
+
+// Try the most specific phrasing first and stop at the first trustworthy answer.
+async function locate(c: Candidate, budget: { left: number }) {
+  const muni = c.municipality!;
+  const area = (c.area || '').trim();
+  const street = extractStreet(c.text_body);
+  c.street_guess = street;
+
+  const attempts: Array<{ q: string; via: string; mustBeRoad: boolean }> = [];
+  if (street && area) attempts.push({ q: `${street}, ${area}, ${muni}, Norway`, via: 'street+area', mustBeRoad: true });
+  if (street) attempts.push({ q: `${street}, ${muni}, Norway`, via: 'street', mustBeRoad: true });
+  if (area) attempts.push({ q: `${area}, ${muni}, Norway`, via: 'area', mustBeRoad: false });
+
+  if (!attempts.length) { c.rejected = 'no area and no street in text'; return; }
+
+  const reasons: string[] = [];
+  for (const a of attempts) {
+    if (budget.left <= 0) { c.rejected = 'geocode budget reached'; return; }
+    budget.left--;
+    const r = await geocode(a.q, muni);
+    await sleep(GEOCODE_DELAY_MS);
+    if (!r.ok) { reasons.push(`${a.via}: ${r.why}`); continue; }
+    // A street query that resolves to a whole suburb has not found the street.
+    if (a.mustBeRoad && !r.hit.isRoad) { reasons.push(`${a.via}: resolved to ${r.hit.precision_label}, not a road`); continue; }
+    if (r.hit.radius_m > MAX_RADIUS_M) { reasons.push(`${a.via}: too vague (~${Math.round(r.hit.radius_m / 100) / 10}km)`); continue; }
+    c.lat = r.hit.lat; c.lng = r.hit.lng; c.radius_m = r.hit.radius_m;
+    c.precision_label = r.hit.precision_label; c.located_by = a.via;
+    return;
   }
-  return {
-    ok: true as const,
-    lat: parseFloat(hit.lat),
-    lng: parseFloat(hit.lon),
-    radius_m: radius,
-    precision_label: hit.addresstype || hit.type || 'unknown',
-  };
+  c.rejected = reasons.join(' | ') || 'no usable location';
+}
+
+function expiryMs(c: Candidate): number {
+  const hours = c.is_active ? ACTIVE_TTL_HOURS : RESOLVED_TTL_HOURS;
+  const base = c.occurred_at ? new Date(c.occurred_at).getTime() : Date.now();
+  return base + hours * 3600_000;
 }
 
 Deno.serve(async (req) => {
@@ -122,7 +179,7 @@ Deno.serve(async (req) => {
     const raw = await fetchPolitiloggen(municipality, take);
     const list: any[] = raw?.messages ?? (Array.isArray(raw) ? raw : []);
     if (!Array.isArray(list) || !list.length) {
-      return json({ ok: true, municipality, fetched: 0, note: 'no messages returned', shape: Object.keys(raw || {}) });
+      return json({ ok: true, municipality, fetched: 0, note: 'no messages returned' });
     }
 
     const all: Candidate[] = list.map((m: any) => ({
@@ -133,57 +190,52 @@ Deno.serve(async (req) => {
       text_body: m.text ?? null,
       is_active: !!m.isActive,
       occurred_at: m.createdOn ?? null,
-    })).filter((c) => c.external_id);
+    })).filter((c) => c.external_id && c.municipality);
 
-    const relevant = allCategories
+    const byCategory = allCategories
       ? all
       : all.filter((c) => RELEVANT_CATEGORIES.has((c.category || '').toLowerCase()));
 
+    // Drop anything already past its lifetime BEFORE spending any geocode calls on it.
+    const now = Date.now();
+    const relevant = byCategory.filter((c) => expiryMs(c) > now);
+    const tooOld = byCategory.length - relevant.length;
+
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    // Re-sync anything still active so its status and expiry stay current; skip settled ones we
+    // already have, since nothing about them will change again.
     const { data: existing } = await admin
-      .from('police_events').select('external_id')
+      .from('police_events').select('external_id,is_active')
       .in('external_id', relevant.map((c) => c.external_id));
-    const known = new Set((existing ?? []).map((e: any) => e.external_id));
+    const settled = new Set((existing ?? []).filter((e: any) => !e.is_active).map((e: any) => e.external_id));
 
-    // Several messages often share one area ("Sentrum" three times). Geocode each distinct area
-    // once: it is the same answer, and Nominatim's rate limit is the scarce resource here.
-    const fresh = relevant.filter((c) => !known.has(c.external_id));
-    const cache = new Map<string, any>();
-    let geocodes = 0;
-    for (const c of fresh) {
-      const area = (c.area || '').trim();
-      if (!area || !c.municipality) { c.rejected = 'no area given'; continue; }
-      const key = `${area}|${c.municipality}`;
-      if (!cache.has(key)) {
-        if (geocodes >= MAX_GEOCODES_PER_RUN) { c.rejected = 'geocode budget reached'; continue; }
-        cache.set(key, await geocodeInMunicipality(area, c.municipality));
-        geocodes++;
-        await sleep(GEOCODE_DELAY_MS);
-      }
-      const g = cache.get(key);
-      if (g.ok) { c.lat = g.lat; c.lng = g.lng; c.radius_m = g.radius_m; c.precision_label = g.precision_label; }
-      else { c.rejected = g.why; }
-    }
+    const todo = relevant.filter((c) => !settled.has(c.external_id));
+    const budget = { left: MAX_GEOCODES_PER_RUN };
+    for (const c of todo) await locate(c, budget);
 
-    const placeable = fresh.filter((c) => c.lat !== undefined);
-    const dropped = fresh.filter((c) => c.lat === undefined);
-
-    const categoryBreakdown: Record<string, number> = {};
-    all.forEach((c) => { const k = c.category || '(none)'; categoryBreakdown[k] = (categoryBreakdown[k] || 0) + 1; });
+    const placeable = todo.filter((c) => c.lat !== undefined);
+    const dropped = todo.filter((c) => c.lat === undefined);
 
     if (dry) {
+      const categoryBreakdown: Record<string, number> = {};
+      all.forEach((c) => { const k = c.category || '(none)'; categoryBreakdown[k] = (categoryBreakdown[k] || 0) + 1; });
       return json({
         ok: true, dry: true, municipality,
         fetched: all.length, categoryBreakdown,
-        relevantAfterCategoryFilter: relevant.length,
-        alreadyStored: known.size, geocodeCallsUsed: geocodes,
-        wouldInsert: placeable.length, droppedCount: dropped.length,
-        sampleInsert: placeable.slice(0, 4).map((c) => ({ area: c.area, category: c.category, lat: c.lat, lng: c.lng, radius_m: c.radius_m, precision: c.precision_label })),
-        sampleDropped: dropped.slice(0, 6).map((d) => ({ area: d.area, category: d.category, why: d.rejected })),
+        afterCategoryFilter: byCategory.length, skippedTooOld: tooOld,
+        stillRelevant: relevant.length, alreadySettled: settled.size,
+        geocodeCallsUsed: MAX_GEOCODES_PER_RUN - budget.left,
+        wouldWrite: placeable.length, droppedCount: dropped.length,
+        located: placeable.map((c) => ({
+          area: c.area, street_guess: c.street_guess, located_by: c.located_by,
+          radius_m: c.radius_m, precision: c.precision_label,
+          is_active: c.is_active, expires_at: new Date(expiryMs(c)).toISOString(),
+        })),
+        dropped: dropped.map((d) => ({ area: d.area, street_guess: d.street_guess, why: d.rejected })),
       });
     }
 
-    let inserted = 0;
+    let written = 0;
     if (placeable.length) {
       const rows = placeable.map((c) => ({
         external_id: c.external_id,
@@ -193,25 +245,22 @@ Deno.serve(async (req) => {
         text_body: c.text_body,
         geom: `SRID=4326;POINT(${c.lng} ${c.lat})`,
         radius_m: c.radius_m,
-        precision_label: c.precision_label,
+        precision_label: c.located_by === 'area' ? c.precision_label : `street:${c.precision_label}`,
         is_active: c.is_active,
         occurred_at: c.occurred_at,
-        expires_at: new Date(Date.now() + DEFAULT_TTL_HOURS * 3600_000).toISOString(),
+        expires_at: new Date(expiryMs(c)).toISOString(),
       }));
       const { error } = await admin.from('police_events').upsert(rows, { onConflict: 'external_id' });
-      if (error) throw new Error(`insert failed: ${error.message}`);
-      inserted = rows.length;
+      if (error) throw new Error(`upsert failed: ${error.message}`);
+      written = rows.length;
     }
 
-    return json({ ok: true, municipality, fetched: all.length, relevant: relevant.length, inserted, dropped: dropped.length });
+    return json({ ok: true, municipality, fetched: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
   } catch (err) {
     return json({ ok: false, error: String(err).slice(0, 500) }, 500);
   }
 });
 
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body, null, 2), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...CORS },
-  });
+  return new Response(JSON.stringify(body, null, 2), { status, headers: { 'Content-Type': 'application/json', ...CORS } });
 }

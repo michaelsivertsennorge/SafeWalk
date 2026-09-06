@@ -370,6 +370,7 @@ async function loadPoliceEvents() {
     })
     .filter(Boolean);
   renderPoliceEvents();
+  checkPoliceProximity();
 }
 
 // PostGIS hands geography back as hex EWKB over the REST API. We only ever store points here, so
@@ -449,6 +450,62 @@ function openPoliceSheet(group) {
       list.appendChild(div);
     });
   openSheet('policeSheet');
+}
+
+
+// ---------- "Something is happening near you" ----------
+// The point of mirroring police reports is that someone walking home learns about an ongoing
+// operation near them without having to think to look. So this checks proximity whenever either
+// the events or the position change, and says so once.
+//
+// Only ongoing operations raise the alert. A brawl that the police have finished dealing with is
+// worth seeing on the map, but waking someone's phone about it would be crying wolf, and an alert
+// people learn to dismiss is worse than no alert.
+const POLICE_ALERT_MARGIN_M = 250; // "in or just outside the area the police described"
+const alertedPoliceIds = new Set();
+
+function checkPoliceProximity() {
+  if (!userLocation || !policeEvents.length) return;
+  const near = policeEvents.filter((e) => {
+    if (!e.is_active) return false;
+    if (alertedPoliceIds.has(e.id)) return false;
+    const d = haversine(userLocation.lat, userLocation.lng, e.lat, e.lng);
+    return d <= (e.radius_m || 250) + POLICE_ALERT_MARGIN_M;
+  });
+  if (!near.length) return;
+  near.forEach((e) => alertedPoliceIds.add(e.id));
+  showPoliceAlert(near);
+}
+
+
+// Politiloggen's categories are Norwegian and read badly dropped into an English sentence
+// ("an ongoing voldshendelse"). The map keeps the original label; this is only for prose.
+const CATEGORY_EN = {
+  'voldshendelse': 'violent incident',
+  'ro og orden': 'public disturbance',
+  'trafikk': 'traffic incident',
+  'brann': 'fire',
+  'savnet': 'missing person case',
+  'andre hendelser': 'incident',
+};
+function describeCategory(c) {
+  return CATEGORY_EN[String(c || '').toLowerCase()] || 'police operation';
+}
+
+function showPoliceAlert(events) {
+  const el = document.getElementById('policeAlert');
+  if (!el) return;
+  const first = events[0];
+  const what = describeCategory(first.category);
+  el.querySelector('.police-alert-text').textContent = events.length === 1
+    ? `Police report an ongoing ${what} near ${first.area || 'you'}.`
+    : `${events.length} ongoing police operations reported near you.`;
+  el.hidden = false;
+  buzz();
+  // Tapping opens the detail, so the alert is a way in rather than just a scare.
+  el.onclick = () => { el.hidden = true; openPoliceSheet(events); };
+  const dismiss = el.querySelector('.police-alert-dismiss');
+  if (dismiss) dismiss.onclick = (ev) => { ev.stopPropagation(); el.hidden = true; };
 }
 
 function escapeHtml(s) {
@@ -679,6 +736,7 @@ function locate(recenter = true) {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        checkPoliceProximity();
         updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
         if (recenter) map.setView([userLocation.lat, userLocation.lng], 16);
         renderPins();
@@ -2442,6 +2500,7 @@ if (navigator.geolocation) {
     (pos) => {
       userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
+      checkPoliceProximity();
     },
     () => { /* keep last known location on error */ },
     { enableHighAccuracy: true, maximumAge: 20000, timeout: 15000 }

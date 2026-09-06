@@ -869,3 +869,45 @@ textarea { min-height: 64px; resize: vertical; }
 .police-when { font-size: 10.5px; color: var(--text-dim); }
 .police-text { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text); }
 .police-attrib { margin: 10px 0 0; font-size: 10.5px; color: var(--text-dim); text-align: center; }
+
+/* "Something is happening near you". Louder than the offline banner on purpose — this is the one
+   message in the app that should interrupt, and it only fires for operations the police say are
+   still ongoing. */
+.police-alert {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 700;
+  width: min(94%, 460px);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: var(--danger-strong);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--danger-strong) 45%, transparent);
+  cursor: pointer;
+  animation: policeAlertIn 0.3s ease;
+}
+@keyframes policeAlertIn {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.police-alert-icon { font-size: 16px; flex: none; }
+.police-alert-text { flex: 1; }
+.police-alert-dismiss {
+  flex: none;
+  background: rgba(255,255,255,0.18);
+  border: none;
+  color: #fff;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
