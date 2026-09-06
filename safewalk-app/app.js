@@ -2228,7 +2228,17 @@ async function persistCreate(pin) {
     return;
   }
   pin.id = data.id; // swap the local temp id for the real one
-  await sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating });
+  const { error: voteError } = await sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating });
+  if (voteError) {
+    // pins_with_scores counts safe_count/danger_count from the votes table alone — creator_rating on
+    // the pin row itself is never summed in. Without this row the pin would sit on the map looking
+    // neutral forever, which is worse than not existing: it reads as "checked, found unremarkable"
+    // rather than "not yet reported." Undo the half-saved report rather than leave it silently wrong.
+    await sb.from('pins').delete().eq('id', pin.id);
+    pins = pins.filter((x) => x.id !== pin.id);
+    renderPins();
+    showToast('Could not save your rating — please try again.');
+  }
 }
 
 async function persistUpdate(pin) {
@@ -2239,7 +2249,14 @@ async function persistUpdate(pin) {
     creator_note: pin.creatorNote || null,
   }).eq('id', pin.id);
   if (error) { showToast('Could not save changes: ' + error.message); return; }
-  await sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id);
+  const { error: voteError } = await sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id);
+  if (voteError) {
+    // Same risk as above, in reverse: the pin row now says the new rating but the vote feeding
+    // safe_count/danger_count still says the old one. Resync from the server rather than leave the
+    // map showing a verdict nobody's vote actually backs.
+    showToast('Your rating change did not fully save — refreshing to check.');
+    refreshPinsFromCloud();
+  }
 }
 
 async function persistDelete(id) {
