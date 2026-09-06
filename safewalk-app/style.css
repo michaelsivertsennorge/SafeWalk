@@ -29,6 +29,10 @@
   --scrim: 14, 14, 36;
   --scrim-elev: 22, 23, 58;
   --you: #4a9eff;
+  --pill-route: #b9aaff;
+  --pill-route-ink: #1a1440;
+  --pill-mypage: #a8e6cf;
+  --pill-mypage-ink: #06281d;
   --on-safe: #06281d;
   --radius: 18px;
   --invert-tiles: 1;
@@ -57,6 +61,10 @@
   --scrim: 253, 247, 250;
   --scrim-elev: 255, 255, 255;
   --you: #2b6fd4;
+  --pill-route: #e2cdf5;
+  --pill-route-ink: #3d2158;
+  --pill-mypage: #c7ecda;
+  --pill-mypage-ink: #10402f;
   --on-safe: #04271b;
   --radius: 18px;
   --invert-tiles: 0;
@@ -82,6 +90,10 @@
   --scrim: 27, 26, 43;
   --scrim-elev: 36, 36, 59;
   --you: #8fbcff;
+  --pill-route: #c3a6f0;
+  --pill-route-ink: #241a35;
+  --pill-mypage: #9fdcc0;
+  --pill-mypage-ink: #10352a;
   --on-safe: #06281d;
   --radius: 18px;
   --invert-tiles: 1;
@@ -107,6 +119,10 @@
   --scrim: 0, 0, 0;
   --scrim-elev: 16, 16, 16;
   --you: #7dd3fc;
+  --pill-route: #7dd3fc;
+  --pill-route-ink: #001018;
+  --pill-mypage: #4ade80;
+  --pill-mypage-ink: #00160d;
   --on-safe: #00160d;
   --radius: 10px;
   --invert-tiles: 1;
@@ -314,36 +330,33 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
-/* The two side buttons become real pills with their own surface, so the bar reads as controls
-   rather than floating labels, and each target clears 44px. SOS keeps its own circular treatment
-   below — it should not look like its neighbours. */
+/* Solid pastel pills, text only. Each fill has a matching ink colour chosen for contrast, not
+   picked by eye — see the --pill-*-ink tokens. SOS keeps its own circular treatment below; it
+   should not look like its neighbours. */
 .bb-btn {
-  background: transparent;
   border: none;
-  color: var(--text-dim);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
   font-size: 11px;
   padding: 4px 10px;
 }
 .bb-btn:not(.bb-sos) {
   flex: 1;
-  max-width: 128px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  max-width: 140px;
   border-radius: 16px;
-  justify-content: center;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 9px 8px;
-  min-height: 54px;
-  transition: transform 0.12s ease, border-color 0.15s ease, color 0.15s ease;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  padding: 0 10px;
+  min-height: 52px;
+  transition: transform 0.12s ease, filter 0.15s ease;
 }
 .bb-btn:not(.bb-sos):active { transform: scale(0.96); }
-.bb-btn:not(.bb-sos):hover { border-color: var(--accent); color: var(--text); }
-.bb-icon { font-size: 19px; line-height: 1; }
+.bb-btn:not(.bb-sos):hover { filter: brightness(1.06); }
+
+.bb-route  { background: var(--pill-route);  color: var(--pill-route-ink); }
+.bb-mypage { background: var(--pill-mypage); color: var(--pill-mypage-ink); }
 
 .bb-sos {
   background: var(--danger-strong);

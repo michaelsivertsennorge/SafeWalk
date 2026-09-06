@@ -107,10 +107,54 @@ const OVERPASS_MIRRORS = [
 // Radius dominates the cost, roughly quadratically. Measured in central Oslo: 300m came back in
 // 2.0s and 25KB; 700m took 14.4s and then failed outright. So the picker opens on a small fast
 // fetch and quietly widens afterwards — see startStreetPicker.
-const NEAR_RADIUS_M = 350;
-const WIDE_RADIUS_M = 900;
+const NEAR_RADIUS_M = 200;
+const WIDE_RADIUS_M = 500;
 
-const streetNetworkCache = new Map(); // "lat,lng,radius" (rounded) -> ways
+// Street geometry is cached across sessions, not just within one. Measured, the same 200m query
+// against Overpass ranged from 0.6s to over 10s depending on server load and how recently we had
+// asked — so the only way this reliably feels fast is to already have the answer. OSM road geometry
+// barely changes, so a week-old copy is fine.
+const STREET_CACHE_KEY = 'safewalk_street_cache';
+const STREET_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const STREET_CACHE_MAX = 8; // a few square kilometres; comfortably inside the localStorage budget
+
+let streetNetworkCache = loadStreetCache(); // [{ lat, lng, radius, ways, at }]
+
+function loadStreetCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STREET_CACHE_KEY) || '[]');
+    const fresh = raw.filter((e) => e && e.at && Date.now() - e.at < STREET_CACHE_TTL_MS && Array.isArray(e.ways));
+    return fresh;
+  } catch {
+    return [];
+  }
+}
+
+function saveStreetCache() {
+  try {
+    localStorage.setItem(STREET_CACHE_KEY, JSON.stringify(streetNetworkCache.slice(0, STREET_CACHE_MAX)));
+  } catch {
+    // Quota exceeded, or storage disabled. The in-memory copy still works for this session.
+  }
+}
+
+// Any cached disc that fully contains the requested one answers the question already — which is what
+// makes the startup prefetch pay off, since marking usually happens near where you are standing.
+function cachedCovering(lat, lng, radius) {
+  for (const e of streetNetworkCache) {
+    if (haversine(lat, lng, e.lat, e.lng) + radius <= e.radius) return e.ways;
+  }
+  return null;
+}
+
+function rememberStreets(lat, lng, radius, ways) {
+  streetNetworkCache = streetNetworkCache.filter(
+    (e) => !(Math.abs(e.lat - lat) < 1e-6 && Math.abs(e.lng - lng) < 1e-6 && e.radius === radius)
+  );
+  streetNetworkCache.unshift({ lat, lng, radius, ways, at: Date.now() });
+  streetNetworkCache = streetNetworkCache.slice(0, STREET_CACHE_MAX);
+  saveStreetCache();
+}
 
 function overpassQuery(lat, lng, radius) {
   // Filtering unwalkable roads in the query rather than after it keeps the payload down; there is
@@ -119,9 +163,14 @@ function overpassQuery(lat, lng, radius) {
   return `[out:json][timeout:25];way(around:${radius},${lat},${lng})[highway][name][highway!~"^(${excluded})$"];out geom;`;
 }
 
+const inFlightOverpass = new Map(); // dedupes concurrent identical requests (prefetch racing a tap)
+
 async function fetchOverpassWays(lat, lng, radius) {
-  const key = `${lat.toFixed(3)},${lng.toFixed(3)},${radius}`;
-  if (streetNetworkCache.has(key)) return streetNetworkCache.get(key);
+  const covered = cachedCovering(lat, lng, radius);
+  if (covered) return covered;
+
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)},${radius}`;
+  if (inFlightOverpass.has(key)) return inFlightOverpass.get(key);
 
   const query = overpassQuery(lat, lng, radius);
   const attempt = async (base) => {
@@ -141,14 +190,14 @@ async function fetchOverpassWays(lat, lng, radius) {
     }
   };
 
-  try {
-    // Promise.any settles on the first mirror that succeeds and ignores the ones still struggling.
-    const ways = await Promise.any(OVERPASS_MIRRORS.map(attempt));
-    streetNetworkCache.set(key, ways);
-    return ways;
-  } catch {
-    return null; // every mirror failed
-  }
+  // Promise.any settles on the first mirror that succeeds and ignores the ones still struggling.
+  const job = Promise.any(OVERPASS_MIRRORS.map(attempt))
+    .then((ways) => { rememberStreets(lat, lng, radius, ways); return ways; })
+    .catch(() => null) // every mirror failed
+    .finally(() => inFlightOverpass.delete(key));
+
+  inFlightOverpass.set(key, job);
+  return job;
 }
 
 async function fetchStreetNetwork(lat, lng, radius = NEAR_RADIUS_M) {
@@ -161,6 +210,15 @@ async function fetchStreetNetwork(lat, lng, radius = NEAR_RADIUS_M) {
 // is needed. Failures are ignored on purpose — this is a guess, not a request.
 function prefetchStreetNetwork(lat, lng) {
   fetchOverpassWays(lat, lng, NEAR_RADIUS_M).catch(() => {});
+}
+
+// The single biggest win available: you can only rate places within 1 km of yourself, so the app
+// already knows roughly which streets you might mark before you have tapped anything. Fetching the
+// wide radius around your position at startup means the picker usually opens from cache instead of
+// waiting on a server whose latency we measured swinging between 0.6s and 10s.
+function prefetchAroundUser(lat, lng) {
+  if (cachedCovering(lat, lng, WIDE_RADIUS_M)) return; // already covered, don't spend the request
+  setTimeout(() => fetchOverpassWays(lat, lng, WIDE_RADIUS_M).catch(() => {}), 2500);
 }
 
 // Nodes are keyed by exact coordinate. OpenStreetMap shares the identical node between ways that
@@ -666,6 +724,7 @@ function locate(recenter = true) {
         updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
         if (recenter) map.setView([userLocation.lat, userLocation.lng], 16);
         renderPins();
+        prefetchAroundUser(userLocation.lat, userLocation.lng);
         resolve(userLocation);
       },
       () => {

@@ -53,15 +53,11 @@
   </button>
 
   <nav class="bottom-bar">
-    <button class="bb-btn" id="routeBtn">
-      <span class="bb-icon" aria-hidden="true">🧭</span><span>Safe route</span>
-    </button>
-    <button class="bb-btn bb-sos" id="sosBtn" aria-label="Emergency: call your contact">
-      <span class="bb-icon" aria-hidden="true">🆘</span><span>SOS</span>
-    </button>
-    <button class="bb-btn" id="myPageBtn">
-      <span class="bb-icon" aria-hidden="true">👤</span><span>My page</span>
-    </button>
+    <button class="bb-btn bb-route" id="routeBtn">Safe Route</button>
+    <!-- The 🆘 emoji draws the letters S-O-S itself, so pairing it with an "SOS" label rendered
+         the word twice. Text only. -->
+    <button class="bb-btn bb-sos" id="sosBtn" aria-label="Emergency: call your contact">SOS</button>
+    <button class="bb-btn bb-mypage" id="myPageBtn">My Page</button>
   </nav>
 
   <div class="sheet-backdrop" id="backdrop"></div>
