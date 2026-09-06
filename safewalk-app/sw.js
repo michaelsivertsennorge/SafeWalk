@@ -8,8 +8,12 @@
 // ran the previous release. That silently kept an old build talking to a migrated database, and
 // cost us a test pin that went to localStorage instead of the server. Offline support is worth a
 // cache; being one version behind on every load is not.
-const CACHE_NAME = 'safewalk-shell-v2';
-const SHELL_FILES = ['./', 'index.html', 'style.css', 'config.js', 'app.js', 'manifest.json', 'icon.svg'];
+const CACHE_NAME = 'safewalk-shell-v3';
+// geo.js was missing here until 2026-09-06. Runtime caching happened to cover it, but a user who
+// installed and went offline before it was ever fetched would have got a page with every geometry
+// function undefined — no distances, no ratings, no route scoring.
+const SHELL_FILES = ['./', 'index.html', 'style.css', 'config.js', 'geo.js', 'app.js',
+  'manifest.json', 'icon.svg', 'icon-180.png', 'icon-512.png', 'icon-maskable-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

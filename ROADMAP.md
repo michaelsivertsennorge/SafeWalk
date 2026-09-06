@@ -72,6 +72,14 @@ a control, and enlarging it would put a tap target over the map.
 - **Third-party APIs have no SLA.** Overpass, Valhalla, Nominatim and NVDB can all be slow or down.
   Failure paths exist but are thin; a slow Overpass currently just makes the street picker feel
   broken.
+- **Service worker registration cannot be exercised in this development environment**, so offline
+  has never actually been watched working. Registration fails here with "An unknown error occurred
+  when fetching the script" — but an A/B against a second, unrelated server serving a three-line
+  worker fails identically, so it is the browser pane, not our code or `server.ps1`. (A `no-store`
+  cache header on the worker script was the obvious suspect and is a real hazard elsewhere; it was
+  not the cause here, and the speculative fix was reverted.) The consequence is that the whole
+  offline path — install, precache, the fall back to cache when the network drops — rests on
+  reading the code. **Worth testing on a real phone in airplane mode before the feature is sold.**
 - **Offline is partly handled.** The last successfully loaded ratings are cached on the device and
   shown with an age banner when the network is gone, and the street network cache persists for a
   week. Still missing: map tiles are not cached, so an offline user sees marks floating on a blank
