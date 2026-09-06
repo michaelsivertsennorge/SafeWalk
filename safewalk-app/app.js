@@ -999,7 +999,7 @@ submitReportBtn.addEventListener('click', () => {
     streetName: useStreet ? pendingStreetData.streetName : undefined,
     safe: selectedRating === 'safe' ? 1 : 0,
     danger: selectedRating === 'danger' ? 1 : 0,
-    notes: [], // additional community notes (route feedback, etc.) accumulate here
+    notes: [], // a brand-new pin has no community notes yet
     createdAt: Date.now(),
     own: true,
     creatorRating: selectedRating,
@@ -1369,7 +1369,7 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
       if (rating === 'safe') nearby.safe++; else nearby.danger++;
       if (note) nearby.notes.push({ text: note, rating });
       nearby.voters = [...(nearby.voters || []), voterId];
-      persistVote(nearby.id, rating);
+      persistVote(nearby.id, rating, note);
     } else {
       const routePin = {
         id: 'p-' + Math.random().toString(36).slice(2),
@@ -2089,7 +2089,9 @@ function rowToPin(row, myVotedIds) {
     streetName: row.street_name || undefined,
     safe: Number(row.safe_count) || 0,
     danger: Number(row.danger_count) || 0,
-    notes: [],
+    // Other voters' notes, anonymised by the view: text and rating only, never who wrote them
+    // and never when, so they cannot be lined up into one person's route.
+    notes: Array.isArray(row.vote_notes) ? row.vote_notes.filter((n) => n && n.text) : [],
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     // The view answers this itself; it deliberately never sends us anyone's user_id.
     own: !!row.is_mine,
@@ -2257,10 +2259,14 @@ async function recordRouteJudgement(pinIds, rating) {
   if (error) console.warn('Could not record route judgement:', error.message);
 }
 
-async function persistVote(pinId, rating) {
+async function persistVote(pinId, rating, note) {
   if (!currentUser) return;
   // The (pin_id, user_id) primary key is what actually guarantees one vote per person here.
-  const { error } = await sb.from('votes').insert({ pin_id: pinId, user_id: currentUser.id, rating });
+  const row = { pin_id: pinId, user_id: currentUser.id, rating };
+  // The note is the useful half of a rating: "mostly reported unsafe" says little, "no lighting
+  // past the underpass, fine before 10pm" says what to do. It was being dropped entirely.
+  if (note && note.trim()) row.note = note.trim().slice(0, 140);
+  const { error } = await sb.from("votes").insert(row);
   if (error) showToast(error.message.includes('duplicate') ? "You've already rated this spot." : 'Could not save your vote.');
 }
 
