@@ -8,3 +8,6 @@ SafeWalk-app.zip
 # OS noise
 Thumbs.db
 .DS_Store
+
+# Scratch copy of the test suite, staged only to run it in a browser.
+safewalk-app/_tmp_test.js
