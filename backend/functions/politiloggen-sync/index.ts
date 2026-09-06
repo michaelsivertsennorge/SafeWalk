@@ -23,9 +23,9 @@
 //    vaguer than MAX_RADIUS_M is dropped rather than drawn as a misleading blob.
 //
 // 4. HOW LONG IT MATTERS. Politiloggen says whether an operation is still running. An ongoing one
-//    stays up; a finished one is history within a few hours. Expiry is measured from when the
-//    incident happened, not from when we synced it — otherwise the hourly cron keeps renewing an
-//    old incident's lease and it never disappears. Anything already past its expiry is skipped
+//    stays up; a finished one is history within a few hours. Expiry is measured from the incident
+//    itself, not from when we synced it — otherwise the hourly cron keeps renewing an old
+//    incident's lease and it never disappears. Anything already past its expiry is skipped
 //    before geocoding, because geocode budget is the scarce resource and spending it on stale
 //    reports starves the fresh ones.
 
@@ -51,7 +51,13 @@ const RELEVANT_CATEGORIES = new Set(['voldshendelse', 'ro og orden']);
 // Norwegian street-name endings. Deliberately conservative: a false street is worse than none,
 // because it moves the warning somewhere the police never mentioned.
 const STREET_SUFFIXES = 'veien|vegen|gata|gaten|gate|vei|plassen|stien|bakken|brua|broen|alleen|alléen|torget|kaia|svingen|løkka|parken';
-const STREET_RE = new RegExp(`\b([A-ZÆØÅ][a-zæøåA-ZÆØÅ-]*(?:${STREET_SUFFIXES}))\b`, 'g');
+// The escaping here matters and was wrong until 2026-09-06. Inside a template literal "\b" is the
+// backspace character, not a word boundary, so the pattern began with a literal U+0008 and could
+// never match anything. Street extraction had therefore returned null for every message ever
+// synced — the database had zero events located by street, all of them district-sized blobs —
+// while the comment above claimed the feature worked. It needs "\b" to reach the regex as \b.
+// The class carries ü and é as well: Grünerbrua and Bygdøy allé are ordinary Oslo street names.
+const STREET_RE = new RegExp(`\\b([A-ZÆØÅ][a-zæøåüéA-ZÆØÅÜÉ-]*(?:${STREET_SUFFIXES}))\\b`, 'g');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const CORS = {
@@ -65,6 +71,9 @@ type Candidate = {
   municipality: string | null;
   area: string | null;
   text_body: string | null;
+  search_text?: string | null;   // every message in the thread, for street extraction
+  last_update_at?: string | null; // newest message, for expiry
+  message_count?: number;
   is_active: boolean;
   occurred_at: string | null;
   lat?: number;
@@ -96,6 +105,16 @@ function extractStreet(text: string | null): string | null {
   const found = [...text.matchAll(STREET_RE)].map((m) => m[1]);
   return found.length ? found[0] : null;
 }
+
+// A regex that never matches is indistinguishable from "the police did not name a street" — which
+// is exactly how the escaping bug above survived for the whole life of the feature, quietly
+// turning every incident into a district-sized blob while the code looked correct. So prove the
+// pattern still works on real phrasing every run, and report it in the sync's own output rather
+// than throwing: a broken extractor should be loud, but it should not take down area-based
+// placement, which still puts the incident roughly in the right part of town.
+const STREET_EXTRACTION_OK =
+  extractStreet('Vi og ambulanse er ved et utested i Rådhusgata etter melding om slagsmål.') === 'Rådhusgata' &&
+  extractStreet('Ingen gate nevnt her i det hele tatt.') === null;
 
 type GeoHit = { lat: number; lng: number; radius_m: number; precision_label: string; isRoad: boolean };
 
@@ -132,7 +151,7 @@ async function geocode(query: string, municipality: string): Promise<{ ok: true;
 async function locate(c: Candidate, budget: { left: number }) {
   const muni = c.municipality!;
   const area = (c.area || '').trim();
-  const street = extractStreet(c.text_body);
+  const street = extractStreet(c.search_text ?? c.text_body);
   c.street_guess = street;
 
   const attempts: Array<{ q: string; via: string; mustBeRoad: boolean }> = [];
@@ -159,9 +178,13 @@ async function locate(c: Candidate, budget: { left: number }) {
   c.rejected = reasons.join(' | ') || 'no usable location';
 }
 
+// Measured from the newest message in the thread, not from when the incident started. An operation
+// the police are still posting updates about at 03:00 is still happening, whatever time it began;
+// counting from the first message would quietly retire it mid-incident.
 function expiryMs(c: Candidate): number {
   const hours = c.is_active ? ACTIVE_TTL_HOURS : RESOLVED_TTL_HOURS;
-  const base = c.occurred_at ? new Date(c.occurred_at).getTime() : Date.now();
+  const stamp = c.last_update_at ?? c.occurred_at;
+  const base = stamp ? new Date(stamp).getTime() : Date.now();
   return base + hours * 3600_000;
 }
 
@@ -182,15 +205,43 @@ Deno.serve(async (req) => {
       return json({ ok: true, municipality, fetched: 0, note: 'no messages returned' });
     }
 
-    const all: Candidate[] = list.map((m: any) => ({
-      external_id: String(m.id ?? ''),
-      category: m.category ?? null,
-      municipality: m.municipality ?? null,
-      area: m.area ?? null,
-      text_body: m.text ?? null,
-      is_active: !!m.isActive,
-      occurred_at: m.createdOn ?? null,
-    })).filter((c) => c.external_id && c.municipality);
+    // Politiloggen posts an incident as a THREAD: the first message reports it, later ones update
+    // it, and the last usually says it is over. Keying on the message id made each update its own
+    // red zone — measured on a real Oslo feed, 50 messages were only 22 incidents, and the two
+    // categories we show were 5 messages for 3 events. That drew one fight as two warnings, and a
+    // "the cordon has been lifted" update as a brand new hazard.
+    //
+    // So collapse each thread to one incident, keyed on the thread. Which message supplies what
+    // matters: the newest carries the current status and the text worth reading, the first carries
+    // when it happened and usually the only mention of the street ("Vi er i Rådhusgata..." — later
+    // updates rarely repeat it), so street extraction searches the whole thread.
+    const threads = new Map<string, any[]>();
+    for (const m of list) {
+      const key = String(m.threadId ?? m.id ?? '');
+      if (!key) continue;
+      if (!threads.has(key)) threads.set(key, []);
+      threads.get(key)!.push(m);
+    }
+
+    const all: Candidate[] = [...threads.entries()].map(([threadId, msgs]) => {
+      const ordered = msgs.slice().sort((a, b) =>
+        new Date(a.createdOn ?? 0).getTime() - new Date(b.createdOn ?? 0).getTime());
+      const first = ordered[0];
+      const latest = ordered[ordered.length - 1];
+      return {
+        external_id: threadId,
+        category: latest.category ?? first.category ?? null,
+        municipality: latest.municipality ?? first.municipality ?? null,
+        area: first.area ?? latest.area ?? null,
+        text_body: latest.text ?? null,
+        search_text: ordered.map((m: any) => m.text ?? '').filter(Boolean).join(' \n'),
+        // The police clear isActive on the final message, so the newest one is the live status.
+        is_active: !!latest.isActive,
+        occurred_at: first.createdOn ?? null,
+        last_update_at: latest.createdOn ?? first.createdOn ?? null,
+        message_count: ordered.length,
+      };
+    }).filter((c) => c.external_id && c.municipality);
 
     const byCategory = allCategories
       ? all
@@ -220,14 +271,14 @@ Deno.serve(async (req) => {
       const categoryBreakdown: Record<string, number> = {};
       all.forEach((c) => { const k = c.category || '(none)'; categoryBreakdown[k] = (categoryBreakdown[k] || 0) + 1; });
       return json({
-        ok: true, dry: true, municipality,
-        fetched: all.length, categoryBreakdown,
+        ok: true, dry: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN',
+        messages: list.length, incidents: all.length, categoryBreakdown,
         afterCategoryFilter: byCategory.length, skippedTooOld: tooOld,
         stillRelevant: relevant.length, alreadySettled: settled.size,
         geocodeCallsUsed: MAX_GEOCODES_PER_RUN - budget.left,
         wouldWrite: placeable.length, droppedCount: dropped.length,
         located: placeable.map((c) => ({
-          area: c.area, street_guess: c.street_guess, located_by: c.located_by,
+          area: c.area, street_guess: c.street_guess, located_by: c.located_by, updates: c.message_count,
           radius_m: c.radius_m, precision: c.precision_label,
           is_active: c.is_active, expires_at: new Date(expiryMs(c)).toISOString(),
         })),
@@ -255,7 +306,7 @@ Deno.serve(async (req) => {
       written = rows.length;
     }
 
-    return json({ ok: true, municipality, fetched: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
+    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
   } catch (err) {
     return json({ ok: false, error: String(err).slice(0, 500) }, 500);
   }

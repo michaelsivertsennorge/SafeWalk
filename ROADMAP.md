@@ -28,9 +28,26 @@ Still worth doing here:
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
   `backend/functions/politiloggen-sync/README.md` for what it decides and why.
   Still open here:
-  - **The police often name a street in the free text** ("...i Rådhusgata...") while `area` says
-    only "Sentrum". Extracting street names from `text` would give far better precision and is the
-    single most valuable improvement available to this feature.
+  - **Street extraction now works — it never had before.** The regex was built with a template
+    literal where `\b` is the backspace character rather than a word boundary, so the pattern
+    began with U+0008 and could not match anything. Every incident ever synced was therefore
+    placed by its district name, which is why the database had zero events at street precision.
+    Fixed, and the function now proves the pattern on known phrasing every run and reports
+    `streetExtraction: "ok"` in its own output, because a regex that never matches is
+    indistinguishable from "the police did not name a street".
+  - **Incidents are threads, and each update used to become its own red zone.** Politiloggen
+    posts an incident then updates it, the last message usually saying it is over. Keying on the
+    message id drew one fight as two warnings and turned "the cordon has been lifted" into a
+    fresh hazard. Now collapsed by `threadId`: measured live, 50 messages are 22 incidents.
+  - **The layer is empty almost all the time, and that is now the main open question.** Over four
+    days of real Oslo data the 50 most recent messages held only 3 `Voldshendelse` and 2
+    `Ro og orden`. With a 6-hour resolved TTL there is essentially never anything to show. The
+    honest options are a longer TTL, or widening the categories. `Andre hendelser` is the
+    interesting one: it carried a cordoned-off pavement at Grünerbrua after grenades were found
+    in Akerselva — exactly the "ongoing operation near you" the owner asked for — but it also
+    carries pure media notices about royal-visit road closures. `Brann` is mostly burnt cooking.
+    `Trafikk` is car-on-car. `Savnet` should stay out: a missing person is not a hazard to a
+    passer-by, and drawing a red zone around one would be wrong. Needs a decision from the owner.
   - **Nominatim has real gaps in Norwegian coverage.** `Økern`, a well-known Oslo district, returns
     no result at all, so those incidents are skipped. Verified it is not rate-limiting — `Skullerud`
     succeeds in the same second.
