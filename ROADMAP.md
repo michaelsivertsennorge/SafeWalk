@@ -60,6 +60,12 @@ a control, and enlarging it would put a tap target over the map.
 
 ## Known weak points worth attacking
 
+- **The lit-streets layer cannot be verified from this development environment.** NVDB rejects any
+  request whose User-Agent does not look like a browser, answering 400 with "User-Agent er ingen
+  gyldig nettleser" (code 4017). Confirmed working with a normal browser UA: 200, 50 lit segments
+  for central Oslo. It should therefore work on a real phone, but that has not been checked — the
+  layer has only ever been observed empty here. Worth confirming on a device before selling the
+  feature.
 - **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
   `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
 

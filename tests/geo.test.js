@@ -467,6 +467,55 @@ check('parsePointEwkb: a parse landing outside the possible range is refused', (
 });
 
 // ---------------------------------------------------------------------------
+// NVDB lit-street geometry
+//
+// The fixture is a real response from Statens vegvesen, captured with a browser
+// User-Agent (the API rejects anything else with "User-Agent er ingen gyldig
+// nettleser"). Note the coordinate order: LATITUDE first, the reverse of the
+// usual convention.
+// ---------------------------------------------------------------------------
+const NVDB_WKT = 'LINESTRING Z(59.916275 10.745775 15.407, 59.916272 10.745683 15.158, ' +
+                 '59.916269 10.745601 14.958, 59.916266 10.745515 14.758)';
+
+check('parseWktLineStringZ: parses a real NVDB response, latitude first', () => {
+  const pts = geo.parseWktLineStringZ(NVDB_WKT);
+  ok(pts, 'should parse');
+  eq(pts.length, 4);
+  near(pts[0][0], 59.916275, 1e-9, 'first value is latitude');
+  near(pts[0][1], 10.745775, 1e-9, 'second value is longitude');
+  // Sanity: the result must land in Oslo, not in the ocean off Somalia, which is where a
+  // lat/lng swap would put it.
+  ok(pts.every(([la, ln]) => la > 59 && la < 61 && ln > 10 && ln < 12), 'every point should be in Oslo');
+});
+
+check('parseWktLineStringZ: drops points that cannot be coordinates', () => {
+  // A swapped pair (10.7 as latitude is fine, but 59.9 as longitude is not) is rejected rather
+  // than drawn somewhere wrong.
+  const mixed = 'LINESTRING Z(59.9 10.7 5, 10.7 200.0 5, 59.91 10.71 5)';
+  const pts = geo.parseWktLineStringZ(mixed);
+  eq(pts.length, 2, 'the out-of-range point should be dropped, the good ones kept');
+});
+
+check('parseWktLineStringZ: refuses rather than returning a degenerate line', () => {
+  eq(geo.parseWktLineStringZ('LINESTRING Z(59.9 10.7 5)'), null, 'one point is not a line');
+  eq(geo.parseWktLineStringZ('LINESTRING Z()'), null);
+  eq(geo.parseWktLineStringZ('LINESTRING Z(nonsense here)'), null);
+});
+
+check('parseWktLineStringZ: survives malformed input without throwing', () => {
+  eq(geo.parseWktLineStringZ(null), null);
+  eq(geo.parseWktLineStringZ(''), null);
+  eq(geo.parseWktLineStringZ('LINESTRING Z'), null, 'no parentheses at all');
+  eq(geo.parseWktLineStringZ('POINT(59.9 10.7)'), null, 'a single point is not a line');
+});
+
+check('parseWktLineStringZ: handles a 2D linestring with no height', () => {
+  const pts = geo.parseWktLineStringZ('LINESTRING(59.9 10.7, 59.91 10.71)');
+  ok(pts && pts.length === 2, 'height is optional');
+  near(pts[1][1], 10.71, 1e-9);
+});
+
+// ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
   failures.forEach((f) => console.error(`  FAIL  ${f}\n`));

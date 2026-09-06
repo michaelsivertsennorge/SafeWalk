@@ -421,6 +421,35 @@ function parsePointEwkb(hex) {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   return { lat, lng };
 }
+
+// ---------- NVDB lit-street geometry ----------
+// Statens vegvesen returns "LINESTRING Z(lat lon height, ...)" when asked with srid=4326.
+// Latitude first, which is the reverse of the usual GeoJSON/WKT convention and exactly the sort of
+// thing a parser gets backwards without anyone noticing: swapped, an Oslo street at 59.9N 10.7E
+// would be drawn at 10.7N 59.9E, in the Indian Ocean.
+//
+// Every coordinate is range-checked and bad points are dropped rather than passed to the map as
+// NaN. A line needs two surviving points to mean anything, so anything less returns null and is
+// simply not drawn — a missing lit street is a small loss, a misplaced one is a lie about where it
+// is safe to walk.
+function parseWktLineStringZ(wkt) {
+  if (typeof wkt !== 'string') return null;
+  const open = wkt.indexOf('(');
+  const close = wkt.lastIndexOf(')');
+  if (open === -1 || close === -1 || close <= open + 1) return null;
+
+  const points = wkt.slice(open + 1, close).split(',').map((triplet) => {
+    const parts = triplet.trim().split(/\s+/);
+    if (parts.length < 2) return null;
+    const lat = Number(parts[0]);
+    const lng = Number(parts[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return [lat, lng];
+  }).filter(Boolean);
+
+  return points.length >= 2 ? points : null;
+}
 // Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
@@ -429,6 +458,6 @@ if (typeof module !== 'undefined' && module.exports) {
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
-    bearingDegrees, compassPoint, describeDistance, COMPASS_POINTS, parsePointEwkb,
+    bearingDegrees, compassPoint, describeDistance, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
   };
 }

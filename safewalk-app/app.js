@@ -306,15 +306,8 @@ function boundsKey(b) {
   return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(3)).join(',');
 }
 
-function parseWktLineStringZ(wkt) {
-  // NVDB returns "LINESTRING Z(lat lon z, lat lon z, ...)" when requested with srid=4326.
-  const inner = wkt.slice(wkt.indexOf('(') + 1, wkt.lastIndexOf(')'));
-  return inner.split(',').map((triplet) => {
-    const [lat, lon] = triplet.trim().split(/\s+/).map(Number);
-    return [lat, lon];
-  });
-}
 
+let loggedLightingFailure = false;
 async function loadLighting() {
   if (map.getZoom() < 14) return; // avoid slow, huge queries when zoomed out
   const b = map.getBounds();
@@ -325,13 +318,27 @@ async function loadLighting() {
   try {
     const url = `https://nvdbapiles-v3.atlas.vegvesen.no/vegobjekter/86?kartutsnitt=${bbox}&srid=4326&inkluder=geometri&antall=1000`;
     const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } });
-    if (!res) return;
+    if (!res) {
+      // Statens vegvesen refuses requests whose User-Agent does not look like a browser,
+      // answering 400 with "User-Agent er ingen gyldig nettleser". Real phones are fine; some
+      // embedded webviews are not, and the layer then just never appears. Say so in the console
+      // rather than leaving the map key promising lit streets that will never arrive.
+      lightingLoadedFor = null;   // let a later attempt retry rather than caching the failure
+      if (!loggedLightingFailure) {
+        loggedLightingFailure = true;
+        console.warn('SafeWalk: could not load lit-street data from NVDB. If this browser sends an ' +
+                     'unusual User-Agent, the API rejects it (code 4017).');
+      }
+      return;
+    }
     const data = await res.json();
     lightingLayer.clearLayers();
     (data.objekter || []).forEach((obj) => {
       const wkt = obj.geometri && obj.geometri.wkt;
       if (!wkt || !wkt.startsWith('LINESTRING')) return;
-      L.polyline(parseWktLineStringZ(wkt), {
+      const pts = parseWktLineStringZ(wkt);
+      if (!pts) return;   // unparseable or out of range: skip rather than draw it wrong
+      L.polyline(pts, {
         color: token('--mixed', '#facc15'),
         weight: 3,
         opacity: 0.5,
