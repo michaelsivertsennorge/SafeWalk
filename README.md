@@ -11,9 +11,24 @@ Valhalla, geocoding is Nominatim, and street geometry comes from Overpass.
 | Path | What it is |
 |---|---|
 | `safewalk-app/` | The whole client. Static files — no build step, no bundler. |
+| `safewalk-app/geo.js` | Pure geometry, street-graph and routing maths. No DOM, no network — so it can be tested. |
 | `safewalk-app/version.json` | **The deploy switch.** Bump this string and every open app reloads itself. |
 | `backend/` | Numbered SQL migrations for Supabase. Run them in order. |
+| `tests/` | Plain-Node tests, no framework. |
 | `server.ps1` | Tiny static file server for local testing (raw TCP; `HttpListener` rejects tunnelled hosts). |
+
+## Tests
+
+```bash
+node tests/geo.test.js
+```
+
+Covers the maths that decides what the app tells you about a street: distances, the street graph and
+its shortest paths, polyline decoding, and the rating bands. Exits non-zero on failure.
+
+These are deliberately dependency-free. The client has no build step, and a suite that needed one
+would stop being run. They also encode bugs already found in real use — merge idempotency, snapping
+to unreachable streets, the exact 75% band boundary — so those cannot come back unnoticed.
 
 ## Running it locally
 

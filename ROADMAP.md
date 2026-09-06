@@ -43,10 +43,12 @@ Still worth doing here:
   broken.
 - **Offline.** The service worker caches the shell, but the app has nothing useful to show without
   the network, and the map is the whole product.
-- **No automated tests at all.** Everything has been verified by hand in a browser. The geometry and
-  distance maths (haversine, `minDistanceToPaths`, the Dijkstra in `shortestStreetPath`) is pure and
-  easily testable, and it is exactly the code where a silent error would make the app lie about
-  whether a street is safe.
+- **Test coverage is thin.** `tests/geo.test.js` now covers the pure maths in `safewalk-app/geo.js`
+  (22 assertions: distances, street graph, shortest paths, polyline decoding, rating bands). Run it
+  with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the auth gates, the
+  reputation flow and all DOM behaviour are still hand-verified only. Route scoring in particular
+  deserves tests; it lives in `app.js` and reads the global `pins`, so it needs a small refactor to
+  take its inputs as arguments before it can be tested.
 - **`renderPins` redraws every pin on every change.** Fine at today's scale, not at a city's.
 
 ## Rules that must not be broken

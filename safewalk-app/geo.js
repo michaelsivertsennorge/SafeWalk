@@ -1,0 +1,192 @@
+// SafeWalk — pure geometry and graph maths.
+//
+// Split out of app.js so it can be tested without a browser, a map, or a network. Everything here
+// is a pure function of its arguments: no DOM, no globals, no fetch. This is the code where a
+// silent error would make the app lie about whether a street is safe, so it is the code that most
+// needs tests. See tests/geo.test.js — run it with `node tests/geo.test.js`.
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function minDistanceToPaths(lat, lng, paths) {
+  let min = Infinity;
+  paths.forEach((path) => {
+    path.forEach(([plat, plng]) => {
+      const d = haversine(lat, lng, plat, plng);
+      if (d < min) min = d;
+    });
+  });
+  return min;
+}
+const nodeKey = (lat, lng) => `${lat.toFixed(7)},${lng.toFixed(7)}`;
+function buildStreetGraph(ways) {
+  const graph = { nodes: new Map(), wayIds: new Set() };
+  mergeWaysIntoGraph(graph, ways);
+  return graph;
+}
+
+// Adds ways to an existing graph. Used by the background widen: the picker stays usable on the
+// small fast network while the larger one arrives and is folded in underneath, with no rebuild and
+// no loss of whatever the user has already tapped.
+function mergeWaysIntoGraph(graph, ways) {
+  const nodes = graph.nodes;
+  const touch = (lat, lng) => {
+    const k = nodeKey(lat, lng);
+    if (!nodes.has(k)) nodes.set(k, { lat, lng, edges: [] });
+    return k;
+  };
+  let added = 0;
+  ways.forEach((w) => {
+    if (w.id != null) {
+      if (graph.wayIds.has(w.id)) return; // already merged; re-adding would duplicate every edge
+      graph.wayIds.add(w.id);
+    }
+    added++;
+    const name = w.tags.name;
+    for (let i = 1; i < w.geometry.length; i++) {
+      const a = w.geometry[i - 1];
+      const b = w.geometry[i];
+      const ka = touch(a.lat, a.lon);
+      const kb = touch(b.lat, b.lon);
+      if (ka === kb) continue;
+      const d = haversine(a.lat, a.lon, b.lat, b.lon);
+      // Undirected: every street is walkable both ways, whatever its driving direction.
+      nodes.get(ka).edges.push({ to: kb, dist: d, name });
+      nodes.get(kb).edges.push({ to: ka, dist: d, name });
+    }
+  });
+  return added;
+}
+
+function nearestGraphNode(graph, lat, lng, maxDist = 80, allowed = null) {
+  let bestKey = null;
+  let bestDist = Infinity;
+  graph.nodes.forEach((n, k) => {
+    if (allowed && !allowed.has(k)) return;
+    const d = haversine(lat, lng, n.lat, n.lng);
+    if (d < bestDist) { bestDist = d; bestKey = k; }
+  });
+  return bestDist <= maxDist ? bestKey : null;
+}
+
+// Every node walkable from `key`. Overpass cuts ways at the edge of the query circle, so a chunk of
+// what it returns is stranded: measured here, 12% of nodes sat in 12 fragments disconnected from
+// the main network. Snapping a tap to the nearest node overall could therefore land on a street
+// that is unreachable, and the user would get "can't reach that" while looking at a map where the
+// two streets plainly join. Restricting the snap to reachable nodes avoids the whole class of
+// confusing failure.
+function reachableFrom(graph, key) {
+  const seen = new Set([key]);
+  const stack = [key];
+  while (stack.length) {
+    const node = graph.nodes.get(stack.pop());
+    if (!node) continue;
+    node.edges.forEach((e) => {
+      if (!seen.has(e.to)) { seen.add(e.to); stack.push(e.to); }
+    });
+  }
+  return seen;
+}
+
+// Plain Dijkstra. These graphs are a few hundred nodes, so a sorted-array frontier is quicker in
+// practice than the bookkeeping a heap would cost.
+function shortestStreetPath(graph, fromKey, toKey) {
+  if (fromKey === toKey) return { keys: [fromKey], names: [] };
+  const dist = new Map([[fromKey, 0]]);
+  const prev = new Map();
+  const visited = new Set();
+  const frontier = [{ key: fromKey, d: 0 }];
+
+  while (frontier.length) {
+    frontier.sort((a, b) => a.d - b.d);
+    const { key } = frontier.shift();
+    if (visited.has(key)) continue;
+    visited.add(key);
+    if (key === toKey) break;
+    const node = graph.nodes.get(key);
+    if (!node) continue;
+    node.edges.forEach((e) => {
+      if (visited.has(e.to)) return;
+      const nd = dist.get(key) + e.dist;
+      if (nd < (dist.has(e.to) ? dist.get(e.to) : Infinity)) {
+        dist.set(e.to, nd);
+        prev.set(e.to, { from: key, name: e.name });
+        frontier.push({ key: e.to, d: nd });
+      }
+    });
+  }
+  if (!dist.has(toKey)) return null; // the two points aren't connected by walkable streets
+
+  const keys = [];
+  const names = [];
+  let cur = toKey;
+  while (cur !== fromKey) {
+    const step = prev.get(cur);
+    if (!step) return null;
+    keys.push(cur);
+    names.push(step.name);
+    cur = step.from;
+  }
+  keys.push(fromKey);
+  return { keys: keys.reverse(), names: names.reverse() };
+}
+
+function ratingBand(ratio) {
+  if (ratio > 0.75) return 'safe';
+  if (ratio < 0.5) return 'danger';
+  return 'mixed';
+}
+
+// Color alone (red/yellow/green) is one of the least accessible combinations for colorblind users,
+// so every rated shape also gets a distinct line style — solid/dashed/dotted reads the same regardless
+// of how the color itself is perceived.
+function ratingDash(ratio) {
+  const band = ratingBand(ratio);
+  if (band === 'safe') return null;
+  if (band === 'mixed') return '7 5';
+  return '2 5';
+}
+
+// ---------- Map setup ----------
+
+function decodePolyline(encoded, precision = 6) {
+  let index = 0, lat = 0, lng = 0;
+  const factor = Math.pow(10, precision);
+  const coordinates = [];
+  while (index < encoded.length) {
+    let result = 1, shift = 0, b;
+    do {
+      b = encoded.charCodeAt(index++) - 63 - 1;
+      result += b << shift;
+      shift += 5;
+    } while (b >= 0x1f);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+
+    result = 1; shift = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63 - 1;
+      result += b << shift;
+      shift += 5;
+    } while (b >= 0x1f);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+
+    coordinates.push([lat / factor, lng / factor]);
+  }
+  return coordinates;
+}
+
+// Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
+// picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    haversine, minDistanceToPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph,
+    nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
+  };
+}
