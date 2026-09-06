@@ -217,6 +217,17 @@ function withinRatingRange(lat, lng) {
   return !!userLocation && haversine(userLocation.lat, userLocation.lng, lat, lng) <= RATING_RADIUS_M;
 }
 
+// The same question asked about a whole pin. For a marked street that means the nearest point ON
+// it, not its stored midpoint. The midpoint is itself a point on the path, so it is never closer
+// than the nearest point — the error only ever went one way, refusing a rating for a street the
+// person was standing on because the middle of the chain was over a kilometre further along.
+function withinRatingRangeOfPin(p) {
+  if (!userLocation || !p) return false;
+  const near = p.paths ? nearestPointOnPaths(userLocation.lat, userLocation.lng, p.paths) : null;
+  const dist = near ? near.dist : haversine(userLocation.lat, userLocation.lng, p.lat, p.lng);
+  return dist <= RATING_RADIUS_M;
+}
+
 let toastTimer = null;
 function showToast(msg, ms = 2600) {
   const el = document.getElementById('toast');
@@ -1226,7 +1237,7 @@ function openPinSheet(id) {
     div.textContent = n.text;
     notesEl.appendChild(div);
   });
-  const inRange = withinRatingRange(p.lat, p.lng);
+  const inRange = withinRatingRangeOfPin(p);
   const alreadyVoted = !!currentUser && (p.voters || []).includes(currentVoterId());
   // Left enabled while signed out on purpose — tapping is how you reach the sign-in prompt, and a
   // dead button explains nothing.
@@ -1267,7 +1278,7 @@ document.querySelectorAll('#pinSheet [data-pin-rating]').forEach((btn) => {
     const p = pins.find((x) => x.id === activePinId);
     if (!p) return;
     if (!requireAccount('to add your rating to this place')) return;
-    if (!withinRatingRange(p.lat, p.lng)) {
+    if (!withinRatingRangeOfPin(p)) {
       showToast('You can only vote on spots within 1 km of your current location.');
       return;
     }
