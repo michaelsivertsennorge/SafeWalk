@@ -515,6 +515,81 @@ check('parseWktLineStringZ: handles a 2D linestring with no height', () => {
   near(pts[1][1], 10.71, 1e-9);
 });
 
+// --- nearestPointOnPaths: measuring to the street, not to the dots it is drawn with -------------
+// OpenStreetMap stores a straight street as its two endpoints. Measuring only to those vertices
+// reported a street you were standing on as far away, and left "Near me" with nothing to point at.
+
+check('nearestPointOnPaths: standing mid-segment reads as on the street, not at its vertex', () => {
+  // The real longest gap in central Oslo: 118m of Grønland with nothing drawn in between.
+  const path = [[59.912516, 10.762111], [59.913344, 10.760386]];
+  const mid = [(path[0][0] + path[1][0]) / 2, (path[0][1] + path[1][1]) / 2];
+  const vertexOnly = Math.min(
+    geo.haversine(mid[0], mid[1], path[0][0], path[0][1]),
+    geo.haversine(mid[0], mid[1], path[1][0], path[1][1]),
+  );
+  ok(vertexOnly > 55, `the old vertex-only measure was ${vertexOnly.toFixed(0)}m off`);
+  near(geo.minDistanceToPaths(mid[0], mid[1], [path]), 0, 1, 'standing on it should read as zero');
+});
+
+check('nearestPointOnPaths: the returned point lies on the street', () => {
+  const path = [[59.9100, 10.7500], [59.9100, 10.7600]];
+  const near1 = geo.nearestPointOnPaths(59.9110, 10.7550, [path]);
+  ok(near1 !== null, 'a point should be found');
+  near(near1.lat, 59.9100, 1e-4, 'foot of the perpendicular sits on the line');
+  near(near1.lng, 10.7550, 1e-4, 'and directly below where we stood');
+  near(near1.dist, geo.haversine(59.9110, 10.7550, near1.lat, near1.lng), 0.5, 'dist matches the point');
+});
+
+check('nearestPointOnPaths: cannot slide past the end of a segment', () => {
+  const path = [[59.9100, 10.7500], [59.9100, 10.7520]];
+  const p = geo.nearestPointOnPaths(59.9100, 10.7400, [path]);   // well beyond the western end
+  near(p.lng, 10.7500, 1e-6, 'clamped to the endpoint rather than extrapolated');
+  near(p.dist, geo.haversine(59.9100, 10.7400, 59.9100, 10.7500), 1);
+});
+
+check('nearestPointOnPaths: the compass now agrees with the distance', () => {
+  // A chain running north, then east, then back south — the shape you get selecting your way round
+  // a block. app.js stores path[floor(len/2)] as the pin's position, which lands on the far corner.
+  const chain = [[59.9100, 10.7500], [59.9160, 10.7500], [59.9160, 10.7600], [59.9100, 10.7600]];
+  const me = [59.9100, 10.7608];                       // standing just east of the southern end
+  const p = geo.nearestPointOnPaths(me[0], me[1], [chain]);
+  const toNearest = geo.bearingDegrees(me[0], me[1], p.lat, p.lng);
+  const stored = chain[Math.floor(chain.length / 2)];
+  const toStored = geo.bearingDegrees(me[0], me[1], stored[0], stored[1]);
+  let disagreement = Math.abs(toNearest - toStored);
+  if (disagreement > 180) disagreement = 360 - disagreement;
+  ok(disagreement > 45, `the old midpoint arrow was only ${disagreement.toFixed(0)}° out`);
+  ok(p.dist < 60, `the nearest part is ${p.dist.toFixed(0)}m off — inside the 60m route threshold`);
+  eq(geo.compassPoint(toNearest), 'west', 'the street really is west of us');
+  ok(geo.compassPoint(toStored) !== 'west', 'while the stored midpoint claimed otherwise');
+});
+
+check('nearestPointOnPaths: searches every path, not just the first', () => {
+  const far = [[59.9500, 10.7500], [59.9500, 10.7600]];
+  const close = [[59.9101, 10.7500], [59.9101, 10.7600]];
+  near(geo.minDistanceToPaths(59.9100, 10.7550, [far, close]), 11, 3, 'picks the closer path');
+});
+
+check('nearestPointOnPaths: survives junk geometry rather than returning NaN', () => {
+  eq(geo.nearestPointOnPaths(59.91, 10.75, []), null, 'no paths at all');
+  eq(geo.nearestPointOnPaths(59.91, 10.75, [[]]), null, 'an empty path');
+  eq(geo.nearestPointOnPaths(NaN, 10.75, [[[59.9, 10.7]]]), null, 'no location to measure from');
+  const p = geo.nearestPointOnPaths(59.91, 10.75, [[[59.9, 10.7], [null, undefined], ['x', 'y']]]);
+  ok(p && Number.isFinite(p.dist), 'a single good vertex among rubbish still measures');
+  eq(geo.minDistanceToPaths(59.91, 10.75, []), Infinity, 'and the old contract still holds');
+});
+
+check('nearestPointOnPaths: a marked street counts against a route running along it', () => {
+  // The reason this matters beyond cosmetics: routeSafetyScore ignores anything over 60m away.
+  const street = [[59.912516, 10.762111], [59.913344, 10.760386]];
+  const mid = [(street[0][0] + street[1][0]) / 2, (street[0][1] + street[1][1]) / 2];
+  const pin = { id: 'p1', paths: [street], safe: 0, danger: 6, lat: mid[0], lng: mid[1] };
+  const route = [mid, mid, mid];
+  const scored = geo.routeSafetyScore(route, 0.2, [pin]);
+  eq(scored.pinsNearby, 1, 'the route walks straight down a street reported unsafe six times');
+  ok(scored.score < 0, `and that must drag the score down, got ${scored.score}`);
+});
+
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {

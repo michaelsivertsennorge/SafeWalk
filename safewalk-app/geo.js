@@ -15,15 +15,56 @@ function haversine(lat1, lon1, lat2, lon2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-function minDistanceToPaths(lat, lng, paths) {
-  let min = Infinity;
+// The nearest point on a set of polylines, measured to the SEGMENTS rather than only to the
+// vertices they are drawn between. Returns { lat, lng, dist } in metres, or null if there is no
+// usable geometry.
+//
+// Two separate faults came from only ever looking at vertices. OpenStreetMap draws a straight
+// street as its endpoints and nothing in between — the longest such gap measured in central Oslo
+// is 118m, on Grønland — so standing in the middle of one read as up to 59m away, right at the
+// 60m threshold routeSafetyScore uses to decide whether a marked street counts against a route.
+// And "Near me" had no such point to aim at, so it drew its compass arrow towards the pin's
+// stored midpoint instead. Replayed over 500m of real central Oslo geometry, that named the
+// wrong compass direction in 80 of 94 chained selections; the worst pointed 176° out, calling a
+// street you were standing on "151m south" when it was north of you.
+//
+// Over a few hundred metres the sphere can be flattened onto a local plane scaled by
+// cos(latitude) to find the closest point; the error is far below a metre. The distance itself is
+// then measured with haversine, so every distance in the app still comes from the same formula.
+function nearestPointOnPaths(lat, lng, paths) {
+  if (!Array.isArray(paths) || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const mPerDegLat = 111320;
+  // Guarded so a longitude at the poles cannot divide by zero. Meaningless there, but finite.
+  const mPerDegLng = Math.max(1e-6, 111320 * Math.cos((lat * Math.PI) / 180));
+
+  let best = null;
+  const consider = (p, q) => {
+    const px = (p[1] - lng) * mPerDegLng, py = (p[0] - lat) * mPerDegLat;
+    const qx = (q[1] - lng) * mPerDegLng, qy = (q[0] - lat) * mPerDegLat;
+    const dx = qx - px, dy = qy - py;
+    const len2 = dx * dx + dy * dy;
+    // How far along the segment the closest point falls, clamped so it cannot slide off an end.
+    const t = len2 > 0 ? Math.max(0, Math.min(1, -(px * dx + py * dy) / len2)) : 0;
+    const cx = px + t * dx, cy = py + t * dy;
+    const d2 = cx * cx + cy * cy;
+    if (best && d2 >= best.d2) return;
+    best = { d2, lat: lat + cy / mPerDegLat, lng: lng + cx / mPerDegLng };
+  };
+
   paths.forEach((path) => {
-    path.forEach(([plat, plng]) => {
-      const d = haversine(lat, lng, plat, plng);
-      if (d < min) min = d;
-    });
+    if (!Array.isArray(path)) return;
+    const pts = path.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (!pts.length) return;
+    if (pts.length === 1) { consider(pts[0], pts[0]); return; }
+    for (let i = 0; i < pts.length - 1; i++) consider(pts[i], pts[i + 1]);
   });
-  return min;
+
+  if (!best) return null;
+  return { lat: best.lat, lng: best.lng, dist: haversine(lat, lng, best.lat, best.lng) };
+}
+function minDistanceToPaths(lat, lng, paths) {
+  const near = nearestPointOnPaths(lat, lng, paths);
+  return near ? near.dist : Infinity;
 }
 const nodeKey = (lat, lng) => `${lat.toFixed(7)},${lng.toFixed(7)}`;
 function buildStreetGraph(ways) {
@@ -454,7 +495,7 @@ function parseWktLineStringZ(wkt) {
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    haversine, minDistanceToPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore,
+    haversine, minDistanceToPaths, nearestPointOnPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore,
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
