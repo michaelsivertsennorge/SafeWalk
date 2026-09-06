@@ -2151,6 +2151,105 @@ document.getElementById('deleteEditPin').addEventListener('click', () => {
   deletePin(editingPinId);
 });
 
+
+// ---------- "Near me": the map, in words ----------
+// The map is the whole product and it had no non-visual equivalent, so "which streets near me are
+// marked unsafe" could only be answered by looking. That excludes screen-reader users entirely,
+// and it is also just worse for anyone walking at night who would rather glance once than study a
+// map. This lists what is around you as sentences, nearest first, with a direction you can act on.
+//
+// Unsafe places are listed before safe ones at the same distance. If someone opens this while
+// walking, the warning is what they need first; a reassurance can wait a line.
+const NEAR_ME_RADIUS_M = 600;
+
+function nearMeEntries() {
+  if (!userLocation) return null;
+  const { lat, lng } = userLocation;
+
+  const fromPins = pins.map((p) => {
+    // For a marked street, measure to the nearest point of it rather than its midpoint, so a
+    // street you are standing on does not read as 200m away.
+    const dist = p.paths ? minDistanceToPaths(lat, lng, p.paths) : haversine(lat, lng, p.lat, p.lng);
+    const total = p.safe + p.danger;
+    const ratio = total ? p.safe / total : 0.5;
+    const band = ratingBand(ratio);
+    return {
+      kind: 'pin', dist, band,
+      name: p.streetName || (p.radius ? 'A marked area' : 'A marked spot'),
+      detail: `${p.safe} safe, ${p.danger} unsafe`,
+      bearing: bearingDegrees(lat, lng, p.lat, p.lng),
+      note: p.creatorNote || (p.notes && p.notes.length ? p.notes[0].text : ''),
+    };
+  });
+
+  const fromPolice = policeEvents.map((e) => ({
+    kind: 'police',
+    dist: Math.max(0, haversine(lat, lng, e.lat, e.lng) - (e.radius_m || 0)),
+    band: 'danger',
+    name: `Police: ${describeCategory(e.category)}`,
+    detail: e.is_active ? 'ongoing' : 'reported earlier',
+    bearing: bearingDegrees(lat, lng, e.lat, e.lng),
+    note: e.area ? `Somewhere around ${e.area}` : '',
+  }));
+
+  const rank = { danger: 0, mixed: 1, safe: 2 };
+  return [...fromPins, ...fromPolice]
+    .filter((e) => e.dist <= NEAR_ME_RADIUS_M)
+    .sort((a, b) => (rank[a.band] - rank[b.band]) || (a.dist - b.dist));
+}
+
+function renderNearMe() {
+  const list = document.getElementById('nearMeList');
+  const summary = document.getElementById('nearMeSummary');
+  list.innerHTML = '';
+
+  const entries = nearMeEntries();
+  if (!entries) {
+    summary.textContent = 'Your location is not available yet, so there is nothing to measure from.';
+    return;
+  }
+  if (!entries.length) {
+    summary.textContent = `Nothing has been reported within ${NEAR_ME_RADIUS_M} m of you. That means nobody has said anything about these streets — not that they are known to be safe.`;
+    return;
+  }
+
+  const unsafe = entries.filter((e) => e.band === 'danger').length;
+  summary.textContent = unsafe
+    ? `${entries.length} report${entries.length === 1 ? '' : 's'} within ${NEAR_ME_RADIUS_M} m, ${unsafe} of them flagged. Flagged first, then nearest.`
+    : `${entries.length} report${entries.length === 1 ? '' : 's'} within ${NEAR_ME_RADIUS_M} m, none flagged.`;
+
+  entries.forEach((e) => {
+    const li = document.createElement('li');
+    li.className = `near-item near-${e.band}`;
+    const words = {
+      danger: e.kind === 'police' ? '' : 'mostly reported unsafe',
+      mixed: 'mixed reports',
+      safe: 'mostly reported safe',
+    }[e.band];
+    const head = document.createElement('div');
+    head.className = 'near-head';
+    head.textContent = `${describeDistance(e.dist)} ${compassPoint(e.bearing)} — ${e.name}`;
+    const sub = document.createElement('div');
+    sub.className = 'near-sub';
+    sub.textContent = [words, e.detail].filter(Boolean).join(' · ');
+    li.appendChild(head);
+    li.appendChild(sub);
+    if (e.note) {
+      const n = document.createElement('div');
+      n.className = 'near-note';
+      n.textContent = e.note;          // textContent: community and third-party text
+      li.appendChild(n);
+    }
+    list.appendChild(li);
+  });
+}
+
+document.getElementById('nearMeBtn').addEventListener('click', () => {
+  cancelPicking();
+  renderNearMe();
+  openSheet('nearMeSheet');
+});
+
 document.getElementById('legendToggleBtn').addEventListener('click', () => {
   const panel = document.getElementById('legendPanel');
   const btn = document.getElementById('legendToggleBtn');

@@ -340,6 +340,62 @@ check('adjustForContrast: no colour a user can pick produces an unreadable butto
 });
 
 // ---------------------------------------------------------------------------
+// Direction in words — the map's non-visual equivalent
+// ---------------------------------------------------------------------------
+check('bearingDegrees: cardinal directions from a point in Oslo', () => {
+  const lat = 59.9139, lng = 10.7522;
+  near(geo.bearingDegrees(lat, lng, lat + 0.01, lng), 0, 0.5, 'due north');
+  near(geo.bearingDegrees(lat, lng, lat, lng + 0.01), 90, 0.5, 'due east');
+  near(geo.bearingDegrees(lat, lng, lat - 0.01, lng), 180, 0.5, 'due south');
+  near(geo.bearingDegrees(lat, lng, lat, lng - 0.01), 270, 0.5, 'due west');
+});
+
+check('bearingDegrees: always returns 0..360', () => {
+  const lat = 59.9139, lng = 10.7522;
+  for (let i = 0; i < 36; i++) {
+    const a = (i * 10) * Math.PI / 180;
+    const d = geo.bearingDegrees(lat, lng, lat + 0.01 * Math.cos(a), lng + 0.01 * Math.sin(a));
+    ok(d >= 0 && d < 360, `bearing out of range: ${d}`);
+  }
+});
+
+check('compassPoint: maps degrees to the eight points, wrapping at north', () => {
+  eq(geo.compassPoint(0), 'north');
+  eq(geo.compassPoint(45), 'north-east');
+  eq(geo.compassPoint(90), 'east');
+  eq(geo.compassPoint(180), 'south');
+  eq(geo.compassPoint(270), 'west');
+  eq(geo.compassPoint(359), 'north', 'just short of 360 is still north, not north-west');
+  eq(geo.compassPoint(360), 'north');
+  eq(geo.compassPoint(-45), 'north-west', 'negative degrees normalise');
+});
+
+check('compassPoint: every point is reachable and boundaries land correctly', () => {
+  const seen = new Set();
+  for (let d = 0; d < 360; d += 1) seen.add(geo.compassPoint(d));
+  eq(seen.size, 8, 'all eight points must be reachable');
+  // 22.5 is the boundary between north and north-east.
+  eq(geo.compassPoint(22), 'north');
+  eq(geo.compassPoint(23), 'north-east');
+});
+
+check('describeDistance: phrased the way a person would say it', () => {
+  eq(geo.describeDistance(5), 'right here');
+  eq(geo.describeDistance(19), 'right here');
+  eq(geo.describeDistance(20), '20 m');
+  eq(geo.describeDistance(184), '180 m', 'rounded to 10m, not false precision');
+  eq(geo.describeDistance(999), '1000 m');
+  eq(geo.describeDistance(1000), '1.0 km');
+  eq(geo.describeDistance(2450), '2.5 km');
+});
+
+check('bearing + compass: a pin due south-west reads as south-west', () => {
+  const lat = 59.9139, lng = 10.7522;
+  const d = geo.bearingDegrees(lat, lng, lat - 0.01, lng - 0.019);  // ~south-west at this latitude
+  eq(geo.compassPoint(d), 'south-west');
+});
+
+// ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
   failures.forEach((f) => console.error(`  FAIL  ${f}\n`));

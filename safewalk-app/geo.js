@@ -334,6 +334,40 @@ function adjustForContrast(hex, minRatio = 4.5) {
   }
   return hex; // unreachable in practice: black and white both satisfy any ratio below 21
 }
+
+// ---------- Direction in words ----------
+// The map is the whole product and it has no non-visual equivalent: "which streets near me are
+// marked unsafe" is currently answerable only by looking. Distance alone does not help — "180m
+// away" could be behind you. A compass point turns a pin into something you can act on without
+// looking at a screen, which matters both for screen-reader users and for anyone walking at night
+// who would rather not stare at a phone.
+
+// Initial bearing from one point to another, in degrees clockwise from north.
+function bearingDegrees(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2), Δλ = toRad(lng2 - lng1);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+const COMPASS_POINTS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+
+// Eight points is the right granularity for spoken directions: sixteen would be more precise than
+// anyone can act on while walking, and four is too coarse to distinguish two nearby streets.
+function compassPoint(deg) {
+  if (!Number.isFinite(deg)) return null;
+  const i = Math.round((((deg % 360) + 360) % 360) / 45) % 8;
+  return COMPASS_POINTS[i];
+}
+
+// Distance phrased the way a person would say it, not to the metre.
+function describeDistance(m) {
+  if (!Number.isFinite(m)) return null;
+  if (m < 20) return 'right here';
+  if (m < 1000) return `${Math.round(m / 10) * 10} m`;
+  return `${(m / 1000).toFixed(1)} km`;
+}
 // Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
@@ -342,5 +376,6 @@ if (typeof module !== 'undefined' && module.exports) {
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
+    bearingDegrees, compassPoint, describeDistance, COMPASS_POINTS,
   };
 }

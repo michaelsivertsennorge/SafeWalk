@@ -17,6 +17,7 @@
 
   <header class="topbar">
     <div class="brand"><span class="brand-icon">🌙</span> SafeWalk</div>
+    <button class="legend-toggle" id="nearMeBtn">Near me</button>
     <button class="legend-toggle" id="legendToggleBtn" aria-expanded="false" aria-controls="legendPanel">Map key</button>
   </header>
 
@@ -116,6 +117,17 @@
     <button class="btn btn-secondary btn-block" id="pinAddHereBtn">➕ Mark something else here</button>
     <button class="btn btn-secondary btn-block" id="pinRedragBtn" hidden>🔀 Redrag this street</button>
     <button class="btn btn-danger btn-block" id="pinDeleteBtn" hidden>Delete this report</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- The map in words: what is around you, nearest first, readable without looking -->
+  <section class="sheet" id="nearMeSheet" role="dialog" aria-modal="true" aria-labelledby="nearMeTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="nearMeTitle">Near me</h2>
+    <p class="sheet-sub" id="nearMeSummary" aria-live="polite"></p>
+    <ul class="near-list" id="nearMeList"></ul>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>

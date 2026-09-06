@@ -1035,3 +1035,20 @@ a:focus-visible {
 }
 .accent-reset { flex: none; min-height: 36px; padding: 6px 12px; font-size: 12.5px; }
 .accent-note { margin: 0 0 4px; font-size: 11px; line-height: 1.4; }
+
+/* "Near me" — the map as a list. Styled as prose rather than chrome: it is meant to be read or
+   spoken, not scanned for icons. */
+.near-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.near-item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--bg-elev);
+}
+.near-danger { border-left-color: var(--danger-strong); }
+.near-mixed  { border-left-color: var(--mixed); }
+.near-safe   { border-left-color: var(--safe-strong); }
+.near-head { font-size: 13.5px; font-weight: 650; }
+.near-sub { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+.near-note { font-size: 12px; margin-top: 5px; line-height: 1.4; }
