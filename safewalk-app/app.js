@@ -616,6 +616,14 @@ function openSheet(id) {
   requestAnimationFrame(() => sheet.focus());
 }
 function closeSheets() {
+  // Dismissing the confirmation any other way — Escape, the backdrop, the Close button — counts as
+  // "no". Without this the awaiting caller would never resume, and confirmResolve would sit there
+  // holding a promise nobody can settle.
+  if (confirmResolve) {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    resolve(false);
+  }
   document.querySelectorAll('.sheet.open').forEach((s) => {
     s.classList.remove('open');
     setTimeout(() => { s.hidden = true; }, 300); // let the slide-down animation finish first
@@ -634,16 +642,18 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.querySelector('.sheet.open')) closeSheets();
 });
 
-document.getElementById('confirmCancelBtn').addEventListener('click', () => {
+// The dialog closes itself on either answer. It used to leave that to each caller, and two of them
+// forgot — including SOS, where cancelling left the confirmation stuck on screen over the map.
+// Callers that want to land on another sheet still just openSheet() afterwards; that supersedes
+// this close, as it always did.
+function settleConfirm(answer) {
   const resolve = confirmResolve;
   confirmResolve = null;
-  if (resolve) resolve(false);
-});
-document.getElementById('confirmOkBtn').addEventListener('click', () => {
-  const resolve = confirmResolve;
-  confirmResolve = null;
-  if (resolve) resolve(true);
-});
+  closeSheets();
+  if (resolve) resolve(answer);
+}
+document.getElementById('confirmCancelBtn').addEventListener('click', () => settleConfirm(false));
+document.getElementById('confirmOkBtn').addEventListener('click', () => settleConfirm(true));
 
 // ---------- Report sheet ----------
 // Reached by tapping (or press-and-holding, for an area) the map directly — see the
@@ -1546,20 +1556,57 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
 // ---------- SOS ----------
 // A web page can never silently place a call — it always requires the user's own confirmation.
 // So the flow here is deliberately just two steps: confirm, then call your one emergency contact.
+// A tel: URL must not contain spaces or punctuation. Someone will type "+47 123 45 678" — and the
+// moment that fails is the moment they least need it to.
+function normalisePhone(raw) {
+  const trimmed = String(raw || '').trim();
+  const plus = trimmed.startsWith('+') ? '+' : '';
+  return plus + trimmed.replace(/[^0-9]/g, '');
+}
+function isUsablePhone(raw) {
+  return normalisePhone(raw).replace(/\D/g, '').length >= 5;
+}
+
 document.getElementById('sosBtn').addEventListener('click', async () => {
   cancelPicking();
   const contact = contacts[0];
   if (!contact || !contact.phone) {
-    showToast('Add your emergency contact first (profile icon) so SOS knows who to call.');
-    renderContacts();
-    openSheet('settingsSheet');
+    showToast('Add your emergency contact in My Page first, so SOS knows who to call.');
+    openMyPage();
     return;
   }
   const ok = await showConfirm(`Call ${contact.name} now?`, { okLabel: 'Call now', title: 'Are you sure?' });
   if (!ok) return;
   buzz();
-  window.location.href = `tel:${contact.phone}`;
+  placeCall(normalisePhone(contact.phone), contact.name);
 });
+
+// Dialling via a real anchor click rather than location.href, for the same reason this app had to
+// stop using confirm(): a standalone PWA does not reliably honour a scripted navigation to a
+// tel: URL, and it fails silently when it doesn't. A synthesised click on an <a href="tel:"> is
+// what browsers actually expect. If nothing happens within a moment, say so and show the number,
+// so the person can dial it themselves instead of staring at a screen that did nothing.
+function placeCall(number, name) {
+  const link = document.createElement('a');
+  link.href = `tel:${number}`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  let launched = false;
+  const noteLaunch = () => { launched = true; };
+  window.addEventListener('blur', noteLaunch, { once: true });
+  document.addEventListener('visibilitychange', noteLaunch, { once: true });
+
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    window.removeEventListener('blur', noteLaunch);
+    document.removeEventListener('visibilitychange', noteLaunch);
+    if (!launched) {
+      showToast(`Couldn't start the call. Dial ${name} on ${number}.`, 12000);
+    }
+  }, 1500);
+}
 
 // ---------- Settings / contacts ----------
 const DARK_MAP_KEY = 'safewalk_dark_map';
@@ -1708,7 +1755,15 @@ document.getElementById('addContactBtn').addEventListener('click', () => {
     showToast('Enter a name and phone number.');
     return;
   }
-  contacts = [{ name, phone }]; // replaces any existing contact — there's only ever one
+  // Catch an unusable number now, at a calm moment, rather than letting someone discover it while
+  // frightened and pressing SOS. Deliberately loose — international formats vary wildly and a
+  // strict pattern would reject real numbers — but "asdf" should not be accepted.
+  if (!isUsablePhone(phone)) {
+    showToast("That doesn't look like a phone number SOS could dial. Include the digits, and the country code if you have it.");
+    return;
+  }
+  // Stored already normalised, so the dial string is correct even if this record predates SOS.
+  contacts = [{ name, phone: normalisePhone(phone) }]; // replaces any existing — there's only ever one
   saveContacts(contacts);
   document.getElementById('contactName').value = '';
   document.getElementById('contactPhone').value = '';
