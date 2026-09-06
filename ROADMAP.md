@@ -45,6 +45,20 @@ Still worth doing here:
   30-day rolling window) are a first guess with no real data behind them. Revisit once there is
   traffic. Wrongly silencing an honest reporter is much worse than letting a careless one continue.
 
+## Accessibility
+
+Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is
+honoured via `prefers-reduced-motion`, and touch targets meet 44px. All four themes pass WCAG AA
+contrast for body text, dim text and the three rating colours used as text.
+
+Still untested: no screen reader has actually been driven through the app. Everything above was
+verified by measurement in a browser, which catches structure but not whether the experience makes
+sense read aloud 2014 the map in particular has no non-visual equivalent, and 201cwhich streets near me
+are marked unsafe201d is currently answerable only by looking.
+
+The OpenStreetMap attribution link stays below 44px on purpose; it is a required credit rather than
+a control, and enlarging it would put a tap target over the map.
+
 ## Known weak points worth attacking
 
 - **Third-party APIs have no SLA.** Overpass, Valhalla, Nominatim and NVDB can all be slow or down.

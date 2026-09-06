@@ -911,3 +911,45 @@ textarea { min-height: 64px; resize: vertical; }
   line-height: 1;
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------------------
+   Reduced motion.
+   Five animations ran unconditionally, two of them infinite loops: the SOS
+   button's pulse and the blue location dot. For someone with a vestibular
+   disorder, constant motion on a screen they are holding while walking is not
+   a style preference — it can cause real nausea and dizziness. WCAG 2.3.3.
+
+   Everything below still *works*; it just stops moving. The SOS button keeps
+   its ring, the location dot keeps its halo, sheets appear instead of sliding.
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* The pulse animation carries the SOS button's outer ring, so pin it directly
+     rather than losing the visual entirely when the animation is switched off. */
+  .bb-sos { box-shadow: 0 0 0 6px var(--bg), 0 6px 18px color-mix(in srgb, var(--danger-strong) 50%, transparent); }
+}
+
+/* ---------------------------------------------------------------------------
+   Touch targets. Measured: several sat under the 44px minimum, which matters
+   most for the people least able to tap precisely.
+   --------------------------------------------------------------------------- */
+.legend-toggle { min-height: 44px; }
+.police-alert-dismiss { width: 44px; height: 44px; }
+#onboardingSkip, #onboardingNext { min-height: 44px; }
+/* Leaflet ships 30px zoom buttons. */
+.leaflet-touch .leaflet-bar a,
+.leaflet-bar a { width: 44px !important; height: 44px !important; line-height: 44px !important; }
+
+/* The bottom bar is a flex row, and .bb-sos was being shrunk to 43px wide against its declared
+   62px — an oval, not the circle it is meant to be, and under the 44px touch minimum. Measured,
+   not eyeballed: the shape only looks round at a glance. */
+.bb-sos { flex: 0 0 62px; }
+
+/* Enlarging the zoom buttons to 44px made the control 91px tall, and it ran 63px underneath the
+   bottom bar — the zoom-out button was unreachable. Lift it clear of the bar and the safe area. */
+.leaflet-bottom.leaflet-left { bottom: calc(96px + env(safe-area-inset-bottom)); }

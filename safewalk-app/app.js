@@ -782,7 +782,10 @@ function openSheet(id) {
   void sheet.offsetHeight; // force layout so un-hiding is registered before the slide-in transition starts
   sheet.classList.add('open');
   backdrop.classList.add('show');
-  requestAnimationFrame(() => sheet.focus());
+  // Focus directly rather than inside requestAnimationFrame: rAF is suspended while the page is
+  // hidden, so the callback silently never runs and focus never enters the dialog. Layout has
+  // already been forced by the offsetHeight read above, so the element is focusable now.
+  sheet.focus();
 }
 function closeSheets() {
   // Dismissing the confirmation any other way — Escape, the backdrop, the Close button — counts as
@@ -805,6 +808,33 @@ function closeSheets() {
   // An update that arrived while a sheet was open has been waiting for this moment.
   if (typeof applyUpdateIfIdle === 'function') setTimeout(applyUpdateIfIdle, 350);
 }
+
+// Every sheet declares aria-modal="true", which promises assistive technology that nothing behind
+// it is reachable. Without a focus trap that promise is false: Tab walks straight out of the dialog
+// onto the map controls and the bottom bar, and a screen-reader user ends up somewhere they cannot
+// see, with no obvious way back. Measured before this: 8 focusable elements outside an open sheet
+// were still reachable.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  const sheet = document.querySelector('.sheet.open');
+  if (!sheet) return;
+
+  const focusables = [...sheet.querySelectorAll(
+    'button, a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+  )].filter((el) => !el.disabled && !el.hidden && !el.closest('[hidden]') && el.getBoundingClientRect().height > 0);
+  if (!focusables.length) { e.preventDefault(); sheet.focus(); return; }
+
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+
+  // Wrap at both ends, and pull focus back in if it has escaped (or is still on the sheet itself).
+  if (e.shiftKey && (active === first || active === sheet || !sheet.contains(active))) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && (active === last || !sheet.contains(active))) {
+    e.preventDefault(); first.focus();
+  }
+});
 backdrop.addEventListener('click', closeSheets);
 document.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', closeSheets));
 document.addEventListener('keydown', (e) => {
