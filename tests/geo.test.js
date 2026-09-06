@@ -276,6 +276,70 @@ check('routeSafetyScore: a marked street counts along its whole length, not just
 });
 
 // ---------------------------------------------------------------------------
+// Colour contrast — what stands between a custom accent and an unreadable app
+// ---------------------------------------------------------------------------
+check('contrastRatio: matches the WCAG reference extremes', () => {
+  near(geo.contrastRatio('#000000', '#ffffff'), 21, 0.01, 'black on white is the maximum');
+  near(geo.contrastRatio('#ffffff', '#ffffff'), 1, 0.01, 'a colour against itself is the minimum');
+});
+
+check('contrastRatio: order of arguments does not matter', () => {
+  near(geo.contrastRatio('#8b7bff', '#14103a'), geo.contrastRatio('#14103a', '#8b7bff'), 1e-9);
+});
+
+check('contrastRatio: known value from the app palette', () => {
+  // The primary button: --accent-ink on midnight's --accent. Measured 5.47 in the browser.
+  near(geo.contrastRatio('#14103a', '#8b7bff'), 5.47, 0.02);
+});
+
+check('hexToRgb: handles 3-digit, 6-digit, and rejects junk', () => {
+  eq(JSON.stringify(geo.hexToRgb('#fff')), JSON.stringify([255, 255, 255]));
+  eq(JSON.stringify(geo.hexToRgb('8b7bff')), JSON.stringify([139, 123, 255]));
+  eq(geo.hexToRgb('nonsense'), null);
+  eq(geo.hexToRgb('#12345'), null, 'a five-digit hex is not a colour');
+});
+
+check('relativeLuminance: ordered as expected', () => {
+  ok(geo.relativeLuminance('#ffffff') > geo.relativeLuminance('#808080'));
+  ok(geo.relativeLuminance('#808080') > geo.relativeLuminance('#000000'));
+  near(geo.relativeLuminance('#000000'), 0, 1e-9);
+  near(geo.relativeLuminance('#ffffff'), 1, 1e-9);
+});
+
+check('pickReadableInk: always returns the more legible of the two inks', () => {
+  eq(geo.pickReadableInk('#ffffff'), geo.INK_DARK, 'dark ink on a white background');
+  eq(geo.pickReadableInk('#000000'), geo.INK_LIGHT, 'light ink on a black background');
+  eq(geo.pickReadableInk('#8b7bff'), geo.INK_DARK, 'the app accent takes dark ink');
+});
+
+check('adjustForContrast: no colour a user can pick produces an unreadable button', () => {
+  // This is the actual guarantee behind letting someone choose their own accent. Sweep the hue
+  // circle at several lightnesses and assert the chosen ink always clears WCAG AA for text.
+  const hslToHex = (h, s, l) => {
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => {
+      const k = (n + h / 30) % 12;
+      const c = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+      return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  };
+  const failures = [];
+  for (let h = 0; h < 360; h += 10) {
+    for (const l of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+      for (const s of [0.4, 0.7, 1.0]) {
+        const chosen = hslToHex(h, s, l);
+        const bg = geo.adjustForContrast(chosen);   // what the app will actually use
+        const ink = geo.pickReadableInk(bg);
+        const r = geo.contrastRatio(ink, bg);
+        if (r < 4.5) failures.push(`${chosen} -> ${bg} / ${ink} = ${r.toFixed(2)}`);
+      }
+    }
+  }
+  eq(failures.length, 0, `every accent must yield a readable label; failed: ${failures.slice(0, 5).join(', ')}`);
+});
+
+// ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
   failures.forEach((f) => console.error(`  FAIL  ${f}\n`));

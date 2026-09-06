@@ -1015,3 +1015,23 @@ a:focus-visible {
 /* Enlarging the zoom buttons to 44px made the control 91px tall, and it ran 63px underneath the
    bottom bar — the zoom-out button was unreachable. Lift it clear of the bar and the safe area. */
 .leaflet-bottom.leaflet-left { bottom: calc(96px + env(safe-area-inset-bottom)); }
+
+/* Accent picker. An override on top of the chosen preset, not a fifth theme. */
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 4px;
+}
+.accent-label { font-size: 13px; font-weight: 600; flex: 1; }
+#accentPicker {
+  width: 52px;
+  height: 44px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  cursor: pointer;
+}
+.accent-reset { flex: none; min-height: 36px; padding: 6px 12px; font-size: 12.5px; }
+.accent-note { margin: 0 0 4px; font-size: 11px; line-height: 1.4; }

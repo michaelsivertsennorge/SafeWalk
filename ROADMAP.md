@@ -20,7 +20,6 @@ Still worth doing here:
 - Buttons are still fairly plain. "Prettier buttons" was part of the ask and has not really been
   addressed — only the palette has.
 - No per-theme testing on a real phone outdoors yet.
-- A custom/user-defined theme (pick your own accent) is not implemented; only the four presets.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 

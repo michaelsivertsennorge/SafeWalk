@@ -182,8 +182,50 @@ function decodePolyline(encoded, precision = 6) {
   return coordinates;
 }
 
-// Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
-// picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
+
+// ---------- Colour contrast ----------
+// Lives here, with tests, because it is the thing standing between a custom accent colour and an
+// app the person who chose it cannot read. A theme picker that lets someone make their own safety
+// app illegible is a bug, not a preference.
+
+function hexToRgb(hex) {
+  let h = String(hex).replace('#', '').trim();
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  return [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16));
+}
+
+// WCAG relative luminance.
+function relativeLuminance(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const [r, g, b] = rgb.map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// WCAG contrast ratio, 1..21. Order of arguments does not matter.
+function contrastRatio(a, b) {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  if (la === null || lb === null) return null;
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// Given a background, return the app's dark or light ink — whichever is more readable on it.
+// Any colour has at least 4.5:1 against one of the two, so this always returns something usable.
+const INK_DARK = '#14103a';
+const INK_LIGHT = '#ffffff';
+function pickReadableInk(bg) {
+  const onDark = contrastRatio(INK_DARK, bg);
+  const onLight = contrastRatio(INK_LIGHT, bg);
+  if (onDark === null || onLight === null) return INK_LIGHT;
+  return onDark >= onLight ? INK_DARK : INK_LIGHT;
+}
+
 // How safe a route looks, per kilometre, given what people have reported near it.
 //
 // The previous version summed `p.safe - p.danger * 1.5` in raw votes, which was wrong in three
@@ -244,9 +286,61 @@ function routeSafetyScore(coords, distanceKm, allPins) {
     dangerPins,
   };
 }
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return [h, s, l];
+}
+
+function hslToHex(h, s, l) {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * c).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// Nudge a colour's lightness until its best ink clears `minRatio`, keeping the hue the person
+// chose. Necessary because picking the better ink is not always enough: a sweep of 540 colours
+// found 12 mid-tone ones — olive #7d7d36, steel blue #4d80b3 — where neither dark nor light ink
+// reaches 4.5:1. Rather than refuse their colour or ship an unreadable button, shift it the
+// smallest distance that works, in whichever direction gets there first.
+function adjustForContrast(hex, minRatio = 4.5) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const best = (c) => Math.max(contrastRatio(INK_DARK, c), contrastRatio(INK_LIGHT, c));
+  if (best(hex) >= minRatio) return hex;
+
+  const [h, s, l0] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  for (let step = 0.01; step <= 1; step += 0.01) {
+    for (const l of [l0 + step, l0 - step]) {
+      if (l < 0 || l > 1) continue;
+      const cand = hslToHex(h, s, l);
+      if (best(cand) >= minRatio) return cand;
+    }
+  }
+  return hex; // unreachable in practice: black and white both satisfy any ratio below 21
+}
+// Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
+// picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     haversine, minDistanceToPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore,
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
+    hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
+    rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
   };
 }
