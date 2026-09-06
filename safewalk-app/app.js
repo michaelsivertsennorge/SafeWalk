@@ -2569,6 +2569,28 @@ map.on('moveend', () => { refreshPinsFromCloud(); });
 
 // Every mutation goes through these. They're only reached past requireAccount(), so an unsigned
 // call is a bug rather than a state to handle gracefully — hence the hard guard.
+// A write that changes no rows is not the same as a write that fails, and row-level security
+// produces the first kind: no error, nothing changed, everything looks fine. That is exactly how
+// "editing your rating never updated your vote" survived unnoticed — persistUpdate awaited the
+// call and inspected neither the error nor the result.
+//
+// Asking for the affected rows back turns that silence into something visible. Used for the two
+// writes that carry the creator's own rating, because that rating is what colours the pin: if it
+// does not save, the map shows the wrong answer while appearing to have worked.
+async function writeExpectingRows(query, what) {
+  const { data, error } = await query.select('pin_id');
+  if (error) {
+    showToast(`Could not ${what}: ${error.message}`);
+    return false;
+  }
+  if (!Array.isArray(data) || !data.length) {
+    console.warn(`SafeWalk: "${what}" was accepted but changed no rows — most likely a row-level security policy.`);
+    showToast(`Could not ${what} — the change may not have saved.`);
+    return false;
+  }
+  return true;
+}
+// call is a bug rather than a state to handle gracefully — hence the hard guard.
 async function persistCreate(pin) {
   if (!currentUser) return;
   const { data, error } = await sb.from('pins').insert(pinToRow(pin)).select('id').single();
@@ -2587,7 +2609,10 @@ async function persistCreate(pin) {
     return;
   }
   pin.id = data.id; // swap the local temp id for the real one
-  await sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating });
+  await writeExpectingRows(
+    sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating }),
+    'record your rating'
+  );
 }
 
 async function persistUpdate(pin) {
@@ -2598,7 +2623,10 @@ async function persistUpdate(pin) {
     creator_note: pin.creatorNote || null,
   }).eq('id', pin.id);
   if (error) { showToast('Could not save changes: ' + error.message); return; }
-  await sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id);
+  await writeExpectingRows(
+    sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id),
+    'update your rating'
+  );
 }
 
 async function persistDelete(id) {
