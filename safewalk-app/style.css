@@ -445,7 +445,11 @@ html, body {
 .rate-btn.selected.rate-danger { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 .rate-btn:disabled { opacity: 0.35; }
 
-textarea, input[type="text"], input[type="tel"], input[type="email"] {
+/* Every text-entry control the app uses must be listed here. input[type="password"] was missing,
+   so the sign-in field rendered as a raw browser default: narrow, square-cornered, and clipping
+   its own placeholder, directly under a properly styled email box. On the one screen standing
+   between someone and contributing a rating, that reads as broken. */
+textarea, input[type="text"], input[type="tel"], input[type="email"], input[type="password"] {
   width: 100%;
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
