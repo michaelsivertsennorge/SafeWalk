@@ -96,9 +96,19 @@ a control, and enlarging it would put a tap target over the map.
 - **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
   `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
 
-- **Third-party APIs have no SLA.** Overpass, Valhalla, Nominatim and NVDB can all be slow or down.
-  Failure paths exist but are thin; a slow Overpass currently just makes the street picker feel
-  broken.
+- **Third-party APIs have no SLA**, but the failure paths were audited on 2026-09-07 by stubbing
+  each service individually (so the rest of the app stayed real) and they hold up better than this
+  entry used to claim. Every one gives up in about a second, re-enables its button and leaves no
+  half-rendered state:
+  - Valhalla down — "The routing service is taking too long to respond. Try again in a moment."
+  - Overpass down — falls back to spot mode and says the street map service is not responding,
+    deliberately not blaming the location.
+  - Nominatim down — this one was wrong and is now fixed: a dead geocoder produced "Couldn't find
+    that address, try adding a city name", which sends someone off correcting a correct address.
+  - NVDB down — silent until 2026-09-06; now warns once and stays retryable.
+
+  Still worth doing: the Valhalla message says "taking too long" even when the connection failed
+  instantly. The advice it gives is right either way, so this is cosmetic.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
