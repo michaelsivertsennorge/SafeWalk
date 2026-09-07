@@ -34,6 +34,19 @@ Still worth doing here:
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
   `backend/functions/politiloggen-sync/README.md` for what it decides and why.
   Still open here:
+  - **The layer could fail once at startup and stay silently blind for the rest of the session —
+    fixed 2026-09-08.** `loadPoliceEvents` was called exactly once, at page load, and any failure
+    (RLS, a dropped connection, a bad column after a migration) hit `if (error || ...) return;` with
+    no log, no legend change, and no retry. A transient blip in the first few seconds of a walk meant
+    no police layer, no proximity alert, and nothing distinguishing that from "the police have
+    nothing to report" for as long as the app stayed open — this is the fifth instance of the silent-
+    failure bug class this project keeps finding (see `MAINTENANCE.md`). Now: the map key carries its
+    own "Police reports — checking… / (recent) / none active right now / data unavailable right now"
+    state, the same pattern already used for lit streets, a failure is logged once via
+    `console.warn`, and the fetch repeats every 5 minutes so a failure retries and an incident that
+    expires mid-session actually drops off the map instead of lingering. Not verified: nobody has
+    watched this against a real failure (e.g. blocking the Supabase request) or watched the legend
+    text change in a browser — read only, like everything else from this environment.
   - **Street extraction now works — it never had before.** The regex was built with a template
     literal where `\b` is the backspace character rather than a word boundary, so the pattern
     began with U+0008 and could not match anything. Every incident ever synced was therefore

@@ -468,6 +468,27 @@ map.on('moveend', loadLighting);
 // weigh themselves, and quietly moving a route because of one would hide the reason.
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
+// How often the client re-asks for police events. Not just for freshness: the sync runs hourly and
+// an incident's own expires_at eventually drops it out of the `.gt()` filter below, so without a
+// repeat fetch a resolved incident would stay drawn (and alertable) for as long as the app is open.
+const POLICE_REFRESH_MS = 5 * 60 * 1000;
+
+// An empty layer is not a neutral thing to show here either — see loadLighting above for the same
+// argument. This is the layer meant to warn someone about an operation happening near them right
+// now, so "no reports" and "could not check" must never look the same on the map key.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    checking: 'Police reports — checking…',
+    ok: `Police reports (recent)${count ? ` — ${count} active` : ''}`,
+    none: 'Police reports — none active right now',
+    failed: 'Police reports — data unavailable right now',
+  }[state] || 'Police reports (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
+let loggedPoliceFailure = false;
 
 async function loadPoliceEvents() {
   if (!sb) return;   // the pins path reports this; one banner is enough
@@ -475,7 +496,20 @@ async function loadPoliceEvents() {
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  // This used to return here with nothing else — indistinguishable, on the map and in the legend,
+  // from "the police have nothing to report right now". A query that failed (RLS, a dropped
+  // connection, a bad column after a migration) told the same reassuring lie. This is the one layer
+  // whose whole job is warning someone about danger near them, so a failure here is the worst place
+  // in the app for that lie to live.
+  if (error || !Array.isArray(data)) {
+    setPoliceLegend('failed');
+    if (!loggedPoliceFailure) {
+      loggedPoliceFailure = true;
+      console.warn('SafeWalk: could not load police events.', error);
+    }
+    return;
+  }
+  loggedPoliceFailure = false;
 
   policeEvents = data
     .map((r) => {
@@ -485,6 +519,7 @@ async function loadPoliceEvents() {
     .filter(Boolean);
   renderPoliceEvents();
   checkPoliceProximity();
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
 }
 
 
@@ -2900,6 +2935,11 @@ renderPins();
 locate(true);
 loadLighting();
 loadPoliceEvents();
+// One fetch at startup used to be the whole story: a single dropped connection meant no police
+// layer, no proximity alert, and no retry for as long as the app stayed open — a walk home is
+// easily longer than that. Repeating it both retries after a failure and picks up whatever the
+// hourly sync added or expired since.
+setInterval(loadPoliceEvents, POLICE_REFRESH_MS);
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);

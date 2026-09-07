@@ -18,9 +18,10 @@ Then pick **exactly one** open item and do it properly. One finished, honestly-d
 worth more than three half-done ones. Prefer, in this order:
 
 1. **A silent failure** — anywhere the app shows "nothing to report" when it actually failed to
-   find out. This exact bug class has now recurred four separate times in this project: police
+   find out. This exact bug class has now recurred five separate times in this project: police
    street names (a regex that could never match), lit streets (impossible from a browser at all),
-   the proximity warning, and an empty map when the CDN is blocked. Each one looked like calm.
+   the proximity warning, an empty map when the CDN is blocked, and the police-events layer itself
+   returning silently on any query error with no retry (see `ROADMAP.md`). Each one looked like calm.
 2. **A claim that isn't true** — in the UI, the README or the roadmap. Correcting a false claim
    counts as a full item; say so in the PR.
 3. **A small capability** from the roadmap.
