@@ -463,6 +463,11 @@ textarea, input[type="text"], input[type="tel"], input[type="email"], input[type
   font-size: 14px;
   font-family: inherit;
   margin-bottom: 10px;
+  /* 42px without this: 18px of line box, 22px of padding, 2px of border. The 2026-09-08 audit that
+     raised every button to the 44px touch minimum only looked at buttons, so every single-line
+     input in the app stayed 2px under it — including the email and password fields on the sign-in
+     screen, which are the first two things a new user ever taps. */
+  min-height: 44px;
 }
 textarea { min-height: 64px; resize: vertical; }
 
@@ -738,6 +743,42 @@ a:focus-visible {
 }
 .contact-row button { background: transparent; border: none; color: var(--danger); font-size: 12px; }
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+/* My Page hub. Each row is a door into one of the four sub-sheets. 60px tall, well past the 44px
+   touch minimum, because these get tapped one-handed in the dark — and the whole point of the hub
+   is that you can hit the right door without reading carefully. */
+.menu-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 12px 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.menu-row:active { background: var(--bg-elev-3, var(--bg-elev-2)); transform: scale(0.995); }
+.menu-row-icon { font-size: 20px; flex: none; line-height: 1; }
+.menu-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.menu-row-label { font-size: 15px; font-weight: 600; }
+/* Truncated rather than wrapped: the hint is a glance, and a two-line hint would push the rows
+   apart unevenly depending on how long an email address happens to be. */
+.menu-row-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-row-chevron { color: var(--text-dim); font-size: 20px; flex: none; line-height: 1; }
+
+.password-form { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 
 .account-row {
   display: flex;

@@ -25,7 +25,42 @@ Still worth doing here:
   under the 44px touch minimum — the "Just this spot"/"Whole street" and "Walking"/"Biking" toggles
   at 36px, and both map-pin buttons at 42px. Those are the choice between marking a spot and
   marking a whole street, tapped one-handed in the dark. All 41 now meet it.
+  That audit was buttons only, and saying "all 41 now meet it" hid the fact that nothing else had
+  been measured. On 2026-09-08 every text input turned out to be 42px — including the email and
+  password fields on the sign-in screen, the first two things a new user ever taps. One
+  `min-height: 44px` on the shared input rule fixed all twelve at once; verified by measuring each
+  one in the browser at 375px, with the nested hidden forms opened so none reported a false zero.
 - No per-theme testing on a real phone outdoors yet.
+
+### My Page is a hub of four sections — **done, 2026-09-08**
+Asked for by the owner. My Page used to be one long scroll: account, standing, a My-reports button,
+theme, accent, preferences, emergency contact, clear-data, version. The emergency contact — the one
+thing you might need in a hurry — sat near the bottom, under the theme picker.
+
+It is now a hub of four rooms, each a sheet of its own: **Profile**, **My reports & marks**,
+**Emergency contact**, **Theme**. Each hub row carries a one-line summary of what is inside, which
+is where the real gain is: "Not set yet — SOS has nobody to call" is visible without opening
+anything, so you find out before the night you need it rather than during. Every sub-sheet has a
+Back that returns to the hub, because only one sheet is ever open at a time and Close drops you on
+the map.
+
+**Changing your password** now lives in Profile, and asks for the current one first. Supabase would
+change a password from the session alone; this app gets opened one-handed on an unlocked phone at
+night, so the case where somebody else is holding that phone is the case the flow has to survive.
+Verifying the old password first means a stolen unlocked phone cannot lock the owner out.
+
+The restructure moved markup without renaming a single element, so every existing handler kept
+working. Verified in the browser at 375px, not by reading: all four rooms open and return, only one
+sheet is ever open, the hub summaries render, the password section is hidden when signed out and
+shown when signed in, and all four validation refusals fire with their own message. **Not verified:
+an actual password change against Supabase** — that needs a real account and a real current
+password, so the two network calls (`signInWithPassword` to re-authenticate, then `updateUser`) have
+been read but never run. Worth doing once on a throwaway account before this is sold.
+
+Still open here:
+- There is no "forgot password" flow. Someone who cannot remember their password has no way back
+  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
+  is the missing half.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 

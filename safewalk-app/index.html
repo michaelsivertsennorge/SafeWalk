@@ -186,11 +186,61 @@
     </div>
   </section>
 
-  <!-- My Page: reports/marks, trusted contacts, app settings -->
+  <!-- My Page: a hub, not a wall. Everything below used to be one sheet you scrolled through, which
+       meant the emergency contact — the one thing you might need in a hurry — sat at the bottom
+       under the theme picker. Four rooms, each entered from here. -->
   <section class="sheet" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsSheetTitle" tabindex="-1" hidden>
     <div class="sheet-handle"></div>
     <h2 id="settingsSheetTitle">My Page</h2>
-    <p class="sheet-sub" id="settingsIntro">Your reports, who to alert, and your data.</p>
+    <p class="sheet-sub" id="settingsIntro">Your account, your marks, who to alert, and how the app looks.</p>
+
+    <nav class="menu-list" aria-label="My Page sections">
+      <button class="menu-row" id="menuProfileBtn">
+        <span class="menu-row-icon" aria-hidden="true">👤</span>
+        <span class="menu-row-text">
+          <span class="menu-row-label">Profile</span>
+          <span class="menu-row-hint" id="menuProfileHint">Sign in, password, and your data</span>
+        </span>
+        <span class="menu-row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="menu-row" id="menuReportsBtn">
+        <span class="menu-row-icon" aria-hidden="true">📍</span>
+        <span class="menu-row-text">
+          <span class="menu-row-label">My reports &amp; marks</span>
+          <span class="menu-row-hint" id="menuReportsHint">Everything you have rated</span>
+        </span>
+        <span class="menu-row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="menu-row" id="menuContactBtn">
+        <span class="menu-row-icon" aria-hidden="true">🆘</span>
+        <span class="menu-row-text">
+          <span class="menu-row-label">Emergency contact</span>
+          <span class="menu-row-hint" id="menuContactHint">Who SOS calls</span>
+        </span>
+        <span class="menu-row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="menu-row" id="menuThemeBtn">
+        <span class="menu-row-icon" aria-hidden="true">🎨</span>
+        <span class="menu-row-text">
+          <span class="menu-row-label">Theme</span>
+          <span class="menu-row-hint" id="menuThemeHint">Colours and the map</span>
+        </span>
+        <span class="menu-row-chevron" aria-hidden="true">›</span>
+      </button>
+    </nav>
+
+    <hr class="divider" />
+    <button class="btn btn-ghost btn-block" id="showOnboardingBtn">Show walkthrough again</button>
+    <p class="version-line">SafeWalk <span id="appVersion">…</span></p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Profile -->
+  <section class="sheet" id="profileSheet" role="dialog" aria-modal="true" aria-labelledby="profileSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="profileSheetTitle">Profile</h2>
 
     <div class="account-row" id="accountRow">
       <div class="account-info">
@@ -205,33 +255,51 @@
       <span id="standingDetail"></span>
     </div>
 
-    <button class="btn btn-primary btn-block" id="myReportsBtn">📍 My reports &amp; marks</button>
-
-    <hr class="divider" />
-    <p class="sheet-label">Theme</p>
-    <div class="theme-picker" id="themePicker" role="group" aria-label="Colour theme"></div>
-
-    <div class="accent-row">
-      <label class="accent-label" for="accentPicker">Accent colour</label>
-      <input type="color" id="accentPicker" aria-label="Choose your own accent colour" />
-      <button class="btn btn-ghost accent-reset" id="accentReset" hidden>Reset</button>
+    <!-- Only meaningful with an account, so it is not shown without one. -->
+    <div id="passwordSection" hidden>
+      <hr class="divider" />
+      <p class="sheet-label">Password</p>
+      <button class="btn btn-secondary btn-block" id="showPasswordFormBtn">Change my password</button>
+      <div class="password-form" id="passwordForm" hidden>
+        <!-- The current password is asked for deliberately. This app gets opened one-handed on an
+             unlocked phone at night; if that phone is taken, whoever holds it must not be able to
+             lock the owner out of their own account in three taps. -->
+        <input id="currentPassword" type="password" autocomplete="current-password" aria-label="Current password" placeholder="Current password" />
+        <input id="newPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
+        <input id="confirmPassword" type="password" autocomplete="new-password" aria-label="Repeat new password" placeholder="Repeat new password" />
+        <p class="sheet-sub" id="passwordStatus" aria-live="polite"></p>
+        <div class="sheet-actions">
+          <button class="btn btn-ghost" id="cancelPasswordBtn">Cancel</button>
+          <button class="btn btn-primary" id="savePasswordBtn">Save new password</button>
+        </div>
+      </div>
     </div>
-    <p class="sheet-sub accent-note" id="accentNote"></p>
 
     <hr class="divider" />
-    <p class="sheet-label">Preferences</p>
-    <div class="settings-toggle-row">
-      <span>🌙 Dark map</span>
-      <label class="switch">
-        <input type="checkbox" id="darkMapToggle" checked aria-label="Dark map" />
-        <span class="switch-slider"></span>
-      </label>
+    <button class="btn btn-ghost btn-block" id="clearDataBtn">Clear my data on this device</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-back>‹ My Page</button>
+      <button class="btn btn-ghost" data-close>Close</button>
     </div>
-    <button class="btn btn-ghost btn-block" id="showOnboardingBtn">Show walkthrough again</button>
+  </section>
 
-    <hr class="divider" />
-    <p class="sheet-label">Emergency contact</p>
-    <p class="sheet-sub">SOS calls this person directly, after you confirm. Just the one.</p>
+  <!-- My reports list -->
+  <section class="sheet" id="myReportsSheet" role="dialog" aria-modal="true" aria-labelledby="myReportsSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="myReportsSheetTitle">My reports &amp; marks</h2>
+    <p class="sheet-sub">Ratings you have added. Tap one to view, edit, or delete it.</p>
+    <div id="myReportsList" class="my-reports-list"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-back>‹ My Page</button>
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Emergency contact -->
+  <section class="sheet" id="contactSheet" role="dialog" aria-modal="true" aria-labelledby="contactSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="contactSheetTitle">Emergency contact</h2>
+    <p class="sheet-sub">SOS calls this person directly, after you confirm. Just the one, so there is nothing to choose between when you are in a hurry.</p>
     <div id="contactList" class="contact-list"></div>
     <button class="btn btn-secondary btn-block" id="showContactFormBtn">+ Add emergency contact</button>
     <div class="contact-form" id="contactForm" hidden>
@@ -242,22 +310,37 @@
         <button class="btn btn-primary" id="addContactBtn">Save</button>
       </div>
     </div>
-
-    <hr class="divider" />
-    <button class="btn btn-ghost btn-block" id="clearDataBtn">Clear my data on this device</button>
-    <p class="version-line">SafeWalk <span id="appVersion">…</span></p>
+    <p class="sheet-sub sheet-fineprint">Kept on this device only — never uploaded, never shown to anyone else.</p>
     <div class="sheet-actions">
+      <button class="btn btn-ghost" data-back>‹ My Page</button>
       <button class="btn btn-ghost" data-close>Close</button>
     </div>
   </section>
 
-  <!-- My reports list -->
-  <section class="sheet" id="myReportsSheet" role="dialog" aria-modal="true" aria-labelledby="myReportsSheetTitle" tabindex="-1" hidden>
+  <!-- Theme -->
+  <section class="sheet" id="themeSheet" role="dialog" aria-modal="true" aria-labelledby="themeSheetTitle" tabindex="-1" hidden>
     <div class="sheet-handle"></div>
-    <h2 id="myReportsSheetTitle">My reports &amp; marks</h2>
-    <p class="sheet-sub">Ratings you've added on this device. Tap one to view, edit, or delete it.</p>
-    <div id="myReportsList" class="my-reports-list"></div>
+    <h2 id="themeSheetTitle">Theme</h2>
+    <p class="sheet-sub">Applies to this device. Rating colours keep their solid, dashed and dotted lines in every theme, so the map stays readable without relying on colour.</p>
+    <div class="theme-picker" id="themePicker" role="group" aria-label="Colour theme"></div>
+
+    <div class="accent-row">
+      <label class="accent-label" for="accentPicker">Accent colour</label>
+      <input type="color" id="accentPicker" aria-label="Choose your own accent colour" />
+      <button class="btn btn-ghost accent-reset" id="accentReset" hidden>Reset</button>
+    </div>
+    <p class="sheet-sub accent-note" id="accentNote"></p>
+
+    <hr class="divider" />
+    <div class="settings-toggle-row">
+      <span>🌙 Dark map</span>
+      <label class="switch">
+        <input type="checkbox" id="darkMapToggle" checked aria-label="Dark map" />
+        <span class="switch-slider"></span>
+      </label>
+    </div>
     <div class="sheet-actions">
+      <button class="btn btn-ghost" data-back>‹ My Page</button>
       <button class="btn btn-ghost" data-close>Close</button>
     </div>
   </section>

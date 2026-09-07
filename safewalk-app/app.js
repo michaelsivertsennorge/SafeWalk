@@ -2122,14 +2122,50 @@ function refreshMapChrome() {
 
 function openMyPage() {
   cancelPicking();
-  renderContacts();
-  applyDarkMapPref();
-  renderThemePicker();
-  refreshStanding();
+  renderMenuHints();
   openSheet('settingsSheet');
 }
 // Reachable from the bottom bar, where a thumb actually lands on a phone.
 document.getElementById('myPageBtn').addEventListener('click', openMyPage);
+
+// My Page is a hub of four rooms. Each renders itself on the way in, rather than the hub rendering
+// all four every time it opens: only one is ever on screen, and the standing lookup behind Profile
+// is a network round-trip nobody asked for when they came to change the theme.
+function openProfile() { renderAccountState(); refreshStanding(); resetPasswordForm(); openSheet('profileSheet'); }
+function openThemeSettings() { applyDarkMapPref(); renderThemePicker(); openSheet('themeSheet'); }
+function openContactSettings() { renderContacts(); openSheet('contactSheet'); }
+function openMyReports() { renderMyReports(); openSheet('myReportsSheet'); }
+
+document.getElementById('menuProfileBtn').addEventListener('click', openProfile);
+document.getElementById('menuThemeBtn').addEventListener('click', openThemeSettings);
+document.getElementById('menuContactBtn').addEventListener('click', openContactSettings);
+document.getElementById('menuReportsBtn').addEventListener('click', openMyReports);
+// Back goes up one level; Close leaves for the map. Only one sheet is ever open at a time, so
+// without a way back, checking your marks and then your contact meant reopening My Page from the
+// bottom bar in between.
+document.querySelectorAll('[data-back]').forEach((btn) => btn.addEventListener('click', openMyPage));
+
+// What is behind each door, said on the door. The emergency-contact line is the one that earns
+// this: "Not set yet" on the hub is the difference between finding out now and finding out at the
+// moment you press SOS.
+function renderMenuHints() {
+  document.getElementById('menuProfileHint').textContent = currentUser
+    ? (currentUser.email || 'Signed in')
+    : 'Not signed in';
+
+  const c = contacts[0];
+  document.getElementById('menuContactHint').textContent = c && c.phone
+    ? `SOS calls ${c.name || c.phone}`
+    : 'Not set yet — SOS has nobody to call';
+
+  const mine = pins.filter((p) => p.own).length;
+  document.getElementById('menuReportsHint').textContent = mine
+    ? `${mine} rating${mine === 1 ? '' : 's'} of yours`
+    : 'Nothing rated yet';
+
+  const theme = THEMES.find((t) => t.id === currentTheme());
+  document.getElementById('menuThemeHint').textContent = theme ? theme.name : 'Colours and the map';
+}
 
 // Only one emergency contact — SOS calls them directly, so there's no list to manage, just
 // "who is it" and a way to replace them.
@@ -2205,7 +2241,9 @@ document.getElementById('clearDataBtn').addEventListener('click', async () => {
     'Clear your emergency contact and app settings on this device? Your ratings stay on your account.',
     { okLabel: 'Clear device data', title: 'Clear data on this device?' }
   );
-  if (!ok) return;
+  // showConfirm closes whatever was open to ask, so "no" has to put Profile back rather than
+  // leaving you on the map wondering whether it went ahead.
+  if (!ok) { openProfile(); return; }
   localStorage.removeItem(CONTACTS_KEY);
   localStorage.removeItem(ONBOARDED_KEY);
   localStorage.removeItem(DARK_MAP_KEY);
@@ -2215,10 +2253,7 @@ document.getElementById('clearDataBtn').addEventListener('click', async () => {
 });
 
 // ---------- My reports & marks (view / edit / delete what you've added) ----------
-document.getElementById('myReportsBtn').addEventListener('click', () => {
-  renderMyReports();
-  openSheet('myReportsSheet');
-});
+// Opened from the My Page hub — see openMyReports().
 
 function relativeDate(ts) {
   const days = Math.floor((Date.now() - ts) / 86400000);
@@ -2513,7 +2548,73 @@ function renderAccountState() {
     hintEl.textContent = 'The map, routes and SOS all work as they are. Sign in when you want to add ratings of your own.';
     btn.textContent = 'Sign in';
   }
+  // There is no password to change without an account, and offering one would be a dead end.
+  const pw = document.getElementById('passwordSection');
+  if (pw) pw.hidden = !currentUser;
 }
+
+// ---------- Changing your password ----------
+// Asking for the current password is not ceremony. Supabase will happily change a password from an
+// existing session alone, and this app is opened one-handed, on an unlocked phone, at night — the
+// case where someone else has your phone is exactly the case this has to survive. Verifying the old
+// password first means a stolen unlocked phone cannot lock you out of your own account.
+function resetPasswordForm() {
+  const form = document.getElementById('passwordForm');
+  const showBtn = document.getElementById('showPasswordFormBtn');
+  if (!form || !showBtn) return;
+  form.hidden = true;
+  showBtn.hidden = false;
+  ['currentPassword', 'newPassword', 'confirmPassword'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('passwordStatus').textContent = '';
+}
+
+document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
+  document.getElementById('showPasswordFormBtn').hidden = true;
+  document.getElementById('passwordForm').hidden = false;
+  document.getElementById('currentPassword').focus();
+});
+
+document.getElementById('cancelPasswordBtn').addEventListener('click', resetPasswordForm);
+
+document.getElementById('savePasswordBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('passwordStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to change your password.'; return; }
+  if (!currentUser) { statusEl.textContent = 'Sign in first.'; return; }
+
+  const current = document.getElementById('currentPassword').value;
+  const next = document.getElementById('newPassword').value;
+  const again = document.getElementById('confirmPassword').value;
+
+  if (!current || !next) { statusEl.textContent = 'Fill in your current and new password.'; return; }
+  // Supabase's own minimum. Checking it here means a typo is caught before a round-trip, and the
+  // message names the rule instead of echoing a server error.
+  if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
+  if (next !== again) { statusEl.textContent = 'The two new passwords do not match.'; return; }
+  if (next === current) { statusEl.textContent = 'That is already your password.'; return; }
+
+  setLoadingStatus(statusEl, 'Checking your current password…');
+  // Re-signing in with the same account refreshes the session rather than replacing the user, so
+  // nothing on the map changes. A wrong password fails here and leaves the old one in place.
+  const { error: reauthError } = await sb.auth.signInWithPassword({
+    email: currentUser.email,
+    password: current,
+  });
+  if (reauthError) {
+    statusEl.textContent = 'That current password is not right.';
+    return;
+  }
+
+  setLoadingStatus(statusEl, 'Saving your new password…');
+  const { error } = await sb.auth.updateUser({ password: next });
+  if (error) { statusEl.textContent = error.message; return; }
+
+  resetPasswordForm();
+  showToast('Password changed.');
+  buzz();
+});
 
 // ---------- Reporter standing ----------
 // Only ever about yourself. There is no way to look up anyone else's accuracy, by design: a public
@@ -2566,10 +2667,12 @@ document.getElementById('accountActionBtn').addEventListener('click', async () =
   if (!sb) return showToast('Cloud sync is unavailable — check your connection.');
   if (currentUser) {
     const ok = await showConfirm("Your ratings stay in your account. You'll still see the map, but you won't be able to add to it until you sign back in.", { okLabel: 'Sign out', title: 'Sign out?' });
-    if (!ok) { openSheet('settingsSheet'); return; }
+    // Both paths land back on Profile, the sheet the button lives on — not the hub, which would
+    // make cancelling a sign-out feel like something happened.
+    if (!ok) { openProfile(); return; }
     await sb.auth.signOut();
     showToast('Signed out.');
-    openSheet('settingsSheet');
+    openProfile();
     return;
   }
   authReason = ''; // opened from the account row, not bounced here by a blocked action

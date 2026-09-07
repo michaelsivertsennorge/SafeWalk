@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "safewalk",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-File", "server.ps1", "-Port", "5566"],
+      "port": 5566
+    }
+  ]
+}
