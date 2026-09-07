@@ -439,8 +439,12 @@ function openPoliceSheet(group) {
     .forEach((e) => {
       const div = document.createElement('div');
       div.className = 'police-item';
-      const when = e.occurred_at ? new Date(e.occurred_at).toLocaleString() : '';
-      div.innerHTML = `<div class="police-item-top"><span class="police-cat">${escapeHtml(e.category || 'Incident')}</span><span class="police-when">${escapeHtml(when)}</span></div>`;
+      // "25 minutes ago" answers the only question being asked of a police report — is this
+      // happening now? — where an absolute timestamp makes you do the subtraction yourself in
+      // the dark. The exact time stays in the title for anyone who wants it.
+      const stamp = e.occurred_at ? new Date(e.occurred_at) : null;
+      const when = stamp ? describeAge(Date.now() - stamp.getTime()) : '';
+      div.innerHTML = `<div class="police-item-top"><span class="police-cat">${escapeHtml(e.category || 'Incident')}</span><span class="police-when" title="${escapeHtml(stamp ? stamp.toLocaleString() : "")}">${escapeHtml(when)}</span></div>`;
       const body = document.createElement('p');
       body.className = 'police-text';
       body.textContent = e.text_body || '';   // textContent, not innerHTML: this is third-party text
@@ -2490,19 +2494,14 @@ function loadCachedPins() {
   }
 }
 
-function describeAge(ts) {
-  const mins = Math.round((Date.now() - ts) / 60000);
-  if (mins < 2) return 'a moment ago';
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
-  return `${Math.round(hrs / 24)} day${Math.round(hrs / 24) === 1 ? '' : 's'} ago`;
-}
+// describeAge lives in geo.js and takes an age in milliseconds, not a timestamp — pure, so it can
+// be tested. There used to be a second copy here taking a timestamp, which silently shadowed the
+// geo.js one because app.js loads later; passing it a duration produced "20704 days ago".
 
 function showStaleBanner(ts) {
   const el = document.getElementById('staleBanner');
   if (!el) return;
-  el.textContent = `Offline — showing ratings saved ${describeAge(ts)}`;
+  el.textContent = `Offline — showing ratings saved ${describeAge(Date.now() - ts)}`;
   el.hidden = false;
 }
 function hideStaleBanner() {

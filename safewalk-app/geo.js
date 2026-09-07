@@ -410,6 +410,25 @@ function describeDistance(m) {
   return `${(m / 1000).toFixed(1)} km`;
 }
 
+// How long ago something happened, in the words a person actually uses. Police reports live only
+// 6-24 hours, so every one of them is "Today" to a day-granularity formatter — useless for the
+// only question being asked of them, which is whether this is happening right now or is over.
+// Minutes below an hour, hours below a day; nothing finer, because the sync runs hourly and
+// pretending to second-level freshness would be a lie about how current the data is.
+function describeAge(ms) {
+  if (!Number.isFinite(ms)) return '';
+  if (ms < 0) return 'just now';               // clock skew between phone and server
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins === 1) return '1 minute ago';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours === 1) return '1 hour ago';
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1 day ago' : `${days} days ago`;
+}
+
 // ---------- PostGIS geometry, as it arrives over the REST API ----------
 // PostgREST hands geography columns back as hex EWKB. Only points are ever read here — police
 // incidents — so this parses that one case rather than pulling in a full WKB library.
@@ -499,6 +518,6 @@ if (typeof module !== 'undefined' && module.exports) {
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
-    bearingDegrees, compassPoint, describeDistance, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
+    bearingDegrees, compassPoint, describeDistance, describeAge, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
   };
 }

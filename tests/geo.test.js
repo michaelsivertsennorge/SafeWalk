@@ -590,6 +590,28 @@ check('nearestPointOnPaths: a marked street counts against a route running along
   ok(scored.score < 0, `and that must drag the score down, got ${scored.score}`);
 });
 
+// --- describeAge: how recent is this police report? ---------------------------------------------
+// Police events live 6-24 hours, so a day-granularity formatter calls every one of them "Today".
+
+check('describeAge: minutes, then hours, then days', () => {
+  eq(geo.describeAge(0), 'just now');
+  eq(geo.describeAge(30 * 1000), 'just now', 'below a minute is not worth a number');
+  eq(geo.describeAge(60 * 1000), '1 minute ago', 'singular');
+  eq(geo.describeAge(25 * 60 * 1000), '25 minutes ago');
+  eq(geo.describeAge(59 * 60 * 1000), '59 minutes ago', 'still minutes right up to the hour');
+  eq(geo.describeAge(60 * 60 * 1000), '1 hour ago', 'singular');
+  eq(geo.describeAge(5 * 60 * 60 * 1000), '5 hours ago');
+  eq(geo.describeAge(23 * 60 * 60 * 1000), '23 hours ago', 'the whole police TTL stays in hours');
+  eq(geo.describeAge(24 * 60 * 60 * 1000), '1 day ago');
+  eq(geo.describeAge(50 * 60 * 60 * 1000), '2 days ago');
+});
+
+check('describeAge: survives a phone clock running ahead of the server', () => {
+  eq(geo.describeAge(-5000), 'just now', 'a negative age must not read as "-1 minutes ago"');
+  eq(geo.describeAge(NaN), '', 'no timestamp means say nothing, not "NaN minutes ago"');
+  eq(geo.describeAge(Infinity), '');
+});
+
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
