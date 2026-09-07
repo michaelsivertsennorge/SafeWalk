@@ -58,6 +58,17 @@ function findNearbyPin(lat, lng, radius = 40) {
 // service with no uptime guarantee — this wraps fetch() so a slow/unresponsive one fails within a
 // bounded time instead of hanging the UI forever. Returns null on any failure; callers already
 // treat a null/falsy result as "show a friendly fallback," so no extra error handling needed there.
+// navigator.onLine only tells the truth in one direction. True can mean "joined a wifi that goes
+// nowhere", so it is never trusted to mean connected — but false means the device is certain it has
+// no network, and that is worth saying out loud.
+//
+// Used only to make a failure message specific, never to skip the attempt. The owner reported not
+// being able to mark a new street offline and getting a message about a service not responding,
+// which reads like the app is broken rather than like there is no signal. Marking a whole street
+// genuinely needs the network — the geometry comes from Overpass — so the honest answer is to say
+// so and point at what does still work.
+const isOffline = () => navigator.onLine === false;
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -981,7 +992,9 @@ document.querySelectorAll('#reportShapeToggle .mode-btn').forEach((btn) => {
     if (!graph) {
       // Don't blame the location for what is usually an overloaded map server — that message sent
       // people hunting for a different spot when the real answer was "try again in a moment".
-      streetLookupStatus.textContent = "The street map service isn't responding right now. Try again in a moment, or mark this as a spot instead.";
+      streetLookupStatus.textContent = isOffline()
+        ? "You are offline, so nearby streets cannot be loaded — that part needs a connection. You can still mark this as a spot, which works offline."
+        : "The street map service isn't responding right now. Try again in a moment, or mark this as a spot instead.";
       reportShape = 'spot';
       setReportShapeButtons('spot');
       return;
@@ -1285,7 +1298,9 @@ document.getElementById('pinRetraceBtn').addEventListener('click', async () => {
   showToast('Loading nearby streets…');
   const graph = await fetchStreetNetwork(p.lat, p.lng);
   if (!graph) {
-    showToast("Couldn't look up nearby streets right now — try again in a moment.");
+    showToast(isOffline()
+      ? "You are offline — the street map cannot be loaded. Your saved marks and the map itself still work."
+      : "Couldn't look up nearby streets right now — try again in a moment.");
     openPinSheet(pinId);
     return;
   }
@@ -1447,7 +1462,9 @@ async function geocodeForRoute(text, fieldLabel) {
     point = await geocode(text);
   } catch (err) {
     if (err && err.message === 'GEOCODER_UNREACHABLE') {
-      throw new Error(`Address lookup isn't responding right now, so "${text}" could not be checked. Tap 📍 next to "${fieldLabel}" to pick the point on the map instead — that needs no lookup at all.`);
+      throw new Error(isOffline()
+        ? `You are offline, so "${text}" cannot be looked up. Tap 📍 next to "${fieldLabel}" to pick the point on the map instead — that needs no connection.`
+        : `Address lookup isn't responding right now, so "${text}" could not be checked. Tap 📍 next to "${fieldLabel}" to pick the point on the map instead — that needs no lookup at all.`);
     }
     throw err;
   }
@@ -1736,7 +1753,9 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res) throw new Error('The routing service is taking too long to respond. Try again in a moment.');
+    if (!res) throw new Error(isOffline()
+      ? "You are offline, so a route cannot be worked out — that needs a connection. The map and your saved marks still work."
+      : "The routing service is taking too long to respond. Try again in a moment.");
     const data = await res.json();
     if (!data.trip) throw new Error(`No ${modeLabel} route found between those points.`);
 
