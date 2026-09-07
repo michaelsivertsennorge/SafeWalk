@@ -612,6 +612,34 @@ check('describeAge: survives a phone clock running ahead of the server', () => {
   eq(geo.describeAge(Infinity), '');
 });
 
+// --- module hygiene: app.js must not shadow anything geo.js defines -----------------------------
+// Both files load as classic scripts, and app.js loads second, so a same-named function in app.js
+// silently replaces the tested one from geo.js. That happened with describeAge: geo.js took a
+// duration, app.js took a timestamp, and the page rendered "20704 days ago" while this suite went
+// on passing — because the suite requires the module directly and never sees the shadowing.
+//
+// Needs the app.js source. Under Node it reads the file; the browser harness passes it in. If
+// neither is available it FAILS rather than passing quietly: a guard that silently does nothing
+// is worse than no guard, which is the whole lesson of the bug it exists to catch.
+check('app.js does not redefine anything geo.js exports', () => {
+  let appSource = typeof globalThis.__APP_SOURCE__ === 'string' ? globalThis.__APP_SOURCE__ : null;
+  if (appSource === null) {
+    const fs = require('fs');
+    const path = require('path');
+    ok(fs && typeof fs.readFileSync === 'function', 'no way to read app.js — cannot run this guard');
+    appSource = fs.readFileSync(path.join(__dirname, '..', 'safewalk-app', 'app.js'), 'utf8');
+  }
+  ok(appSource.length > 1000, 'app.js source looks empty — the guard would pass vacuously');
+
+  // Top-level declarations only: a nested one is scoped and cannot shadow a global.
+  const declared = new Set();
+  for (const m of appSource.matchAll(/^(?:function|const|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
+    declared.add(m[1]);
+  }
+  const clashes = Object.keys(geo).filter((name) => declared.has(name));
+  eq(clashes.join(', '), '', `app.js redeclares geo.js name(s) and will shadow them at runtime`);
+});
+
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {

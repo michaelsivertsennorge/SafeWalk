@@ -27,6 +27,14 @@ node tests/permissions.test.js  # what the public API key can and cannot do (hit
 Covers the maths that decides what the app tells you about a street: distances, the street graph and
 its shortest paths, polyline decoding, and the rating bands. Exits non-zero on failure.
 
+One check in there is not about maths at all. `geo.js` and `app.js` both load as classic scripts,
+app.js second, so a same-named function in app.js silently replaces the tested one from geo.js —
+which happened to `describeAge` and rendered "20704 days ago" on screen while this suite went on
+passing, because it requires the module directly and never sees the shadowing. The guard compares
+geo.js's exports against app.js's top-level declarations, and it was verified by reintroducing that
+exact collision and watching it fail, then by feeding it an empty source to confirm it fails rather
+than passing vacuously.
+
 `permissions.test.js` is read-only by design: every write it attempts is expected to be refused,
 and it verifies that by reading the data back rather than trusting a status code. A PATCH that
 row-level security filtered to zero rows still returns 204, so status codes alone would have missed
