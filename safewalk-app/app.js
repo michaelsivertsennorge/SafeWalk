@@ -1617,13 +1617,22 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     const spread = best.score - worst.score;
     const haveEvidence = anyReports && (scored.length === 1 || spread > 0.15);
 
-    // Three different claims, and they are not interchangeable:
+    // Four different claims, and they are not interchangeable:
     //   SAFEST  — the winning route itself has reports backing it.
-    //   AVOIDS FLAGGED STREETS — it won because others carry warnings, not because anyone vouched
-    //             for this one. Saying "safest" here would overstate what we know.
+    //   AVOIDS FLAGGED STREETS — it won because others carry warnings and it carries none itself.
+    //   FEWEST WARNINGS — every route on offer has somewhere reported unsafe on it, and this one
+    //             has the least. Until 2026-09-07 this case was folded into "avoids flagged
+    //             streets", so the recommended card could read "AVOIDS FLAGGED STREETS" directly
+    //             above its own "⚠ 1 spot on this route reported unsafe". Someone reads that at
+    //             night, on a street they are already unsure about, and the app contradicts itself.
     //   SHORTEST — no usable reports at all; ranked by distance.
     const topIsVouchedFor = haveEvidence && best.pinsNearby > 0 && best.score > 0;
-    const topAvoidsWarnings = haveEvidence && !topIsVouchedFor;
+    const topIsClean = !best.dangerPins;
+    const topAvoidsWarnings = haveEvidence && !topIsVouchedFor && topIsClean;
+    const topIsLeastBad = haveEvidence && !topIsVouchedFor && !topIsClean;
+    // Only claim "fewest" when it is actually true — routes are ordered by score, not by how many
+    // warnings they carry, so the best-scoring one is not automatically the least flagged.
+    const topReallyHasFewest = scored.every((r) => r.dangerPins >= best.dangerPins);
 
     if (!haveEvidence) scored.sort((a, b) => a.distanceKm - b.distanceKm);
 
@@ -1632,6 +1641,8 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       ? `${scored.length} route${scored.length > 1 ? 's' : ''} compared using ${pins.length} community report${pins.length === 1 ? '' : 's'}.`
       : topAvoidsWarnings
         ? `Ranked to avoid ${flagged} route${flagged === 1 ? '' : 's'} with reports of trouble. Nobody has rated the recommended one yet.`
+        : topIsLeastBad
+          ? `Every route here has somewhere reported unsafe on it. This one ranks best on the reports available${topReallyHasFewest ? `, with the fewest — ${best.dangerPins} spot${best.dangerPins === 1 ? '' : 's'}` : ''}.`
         : pins.length
           ? 'No reports along these routes yet — they are ranked by distance only.'
           : 'Nobody has rated streets around here yet, so these routes are ranked by distance only.';
@@ -1647,6 +1658,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       const badge = !isBest ? ''
         : topIsVouchedFor ? '<span class="route-badge">SAFEST</span>'
         : topAvoidsWarnings ? '<span class="route-badge route-badge-plain">AVOIDS FLAGGED STREETS</span>'
+        : topIsLeastBad ? `<span class="route-badge route-badge-plain">${topReallyHasFewest ? 'FEWEST WARNINGS' : 'RANKED BY REPORTS'}</span>`
         : '<span class="route-badge route-badge-plain">SHORTEST</span>';
       const reported = r.pinsNearby
         ? `${r.pinsNearby} report${r.pinsNearby === 1 ? '' : 's'} near ${Math.round(r.coverage * 100)}% of it`
