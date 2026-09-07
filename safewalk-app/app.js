@@ -351,9 +351,24 @@ async function loadLighting() {
   // been drawn yet.
   if (b.getEast() === b.getWest() || b.getNorth() === b.getSouth()) {
     lightingLoadedFor = null;   // try again once the map has a size
+    setLightingLegend('loading');   // never leave the default standing; it claims a layer
     return;
   }
-  const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+  // NVDB's cost grows with the area asked for — measured through our proxy on central Oslo: 9KB
+  // and 17 segments at 0.02°, 46KB at 0.04°, 111KB and 88 segments at 0.08°, all under a second.
+  // Past roughly 0.12° the server refuses outright, which would surface as "data unavailable" for
+  // the whole view, so the box is clamped around the centre instead.
+  //
+  // A safety net, not a working limit: measured on a 520x1200 map, zoom 14 asks for 0.052° and
+  // zoom 15 for 0.026°, both well inside it, so at the zoom-14 threshold above the clamp never
+  // binds and coverage is always the whole view. It only starts trimming at zoom 13 and below,
+  // which is also why the threshold stays where it is — half-covered lighting would read as
+  // "these streets are lit and those are not" when the truth is that we never asked.
+  const MAX_LIGHTING_SPAN_DEG = 0.09;
+  const c = b.getCenter();
+  const halfLng = Math.min((b.getEast() - b.getWest()) / 2, MAX_LIGHTING_SPAN_DEG / 2);
+  const halfLat = Math.min((b.getNorth() - b.getSouth()) / 2, MAX_LIGHTING_SPAN_DEG / 2);
+  const bbox = `${c.lng - halfLng},${c.lat - halfLat},${c.lng + halfLng},${c.lat + halfLat}`;
   try {
     // Through our own backend, not NVDB directly. NVDB rejects any User-Agent that does not look
     // like a browser, and a browser cannot set that header — User-Agent is forbidden to fetch(),
