@@ -1609,30 +1609,16 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     scored.sort((a, b) => b.score - a.score);
 
     // Evidence can sit on any route, not just the winning one — a warning on the SHORTEST route is
-    // a reason to demote it even when the alternatives are unrated. Checking only scored[0] meant a
-    // route with an unsafe report stayed top and the app still said "no reports along these routes".
+    // a reason to demote it even when the alternatives are unrated. Which claim that entitles the
+    // app to make lives in geo.js, where it can be tested; see routeRankingClaim for the four
+    // cases and why they are not interchangeable.
     const best = scored[0];
-    const worst = scored[scored.length - 1];
-    const anyReports = scored.some((r) => r.pinsNearby > 0);
-    const spread = best.score - worst.score;
-    const haveEvidence = anyReports && (scored.length === 1 || spread > 0.15);
-
-    // Four different claims, and they are not interchangeable:
-    //   SAFEST  — the winning route itself has reports backing it.
-    //   AVOIDS FLAGGED STREETS — it won because others carry warnings and it carries none itself.
-    //   FEWEST WARNINGS — every route on offer has somewhere reported unsafe on it, and this one
-    //             has the least. Until 2026-09-07 this case was folded into "avoids flagged
-    //             streets", so the recommended card could read "AVOIDS FLAGGED STREETS" directly
-    //             above its own "⚠ 1 spot on this route reported unsafe". Someone reads that at
-    //             night, on a street they are already unsure about, and the app contradicts itself.
-    //   SHORTEST — no usable reports at all; ranked by distance.
-    const topIsVouchedFor = haveEvidence && best.pinsNearby > 0 && best.score > 0;
-    const topIsClean = !best.dangerPins;
-    const topAvoidsWarnings = haveEvidence && !topIsVouchedFor && topIsClean;
-    const topIsLeastBad = haveEvidence && !topIsVouchedFor && !topIsClean;
-    // Only claim "fewest" when it is actually true — routes are ordered by score, not by how many
-    // warnings they carry, so the best-scoring one is not automatically the least flagged.
-    const topReallyHasFewest = scored.every((r) => r.dangerPins >= best.dangerPins);
+    const claim = routeRankingClaim(scored);
+    const haveEvidence = claim.haveEvidence;
+    const topIsVouchedFor = claim.kind === 'safest';
+    const topAvoidsWarnings = claim.kind === 'avoids';
+    const topIsLeastBad = claim.kind === 'leastBad';
+    const topReallyHasFewest = !!claim.hasFewest;
 
     if (!haveEvidence) scored.sort((a, b) => a.distanceKm - b.distanceKm);
 

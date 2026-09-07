@@ -328,6 +328,42 @@ function routeSafetyScore(coords, distanceKm, allPins) {
   };
 }
 
+// Which claim the app is entitled to make about the route it puts first. This is the single most
+// consequential sentence the product produces — someone decides which way to walk home on it — and
+// it used to live inside the render function, reading globals, where it could not be tested. It was
+// wrong for a long time as a result: the "every route is flagged" case fell through to "AVOIDS
+// FLAGGED STREETS", so the recommended card claimed to avoid warnings while displaying its own.
+//
+// Takes routes already sorted by score, best first, and answers only what the evidence supports:
+//   'safest'    — the winning route itself carries positive reports.
+//   'avoids'    — it won because others carry warnings and it carries none.
+//   'leastBad'  — every route has somewhere reported unsafe; this one merely ranks best.
+//   'shortest'  — no usable evidence; the caller should rank by distance instead.
+//
+// `hasFewest` is reported rather than assumed. Routes are ordered by score, not by how many
+// warnings they carry, so the best-scoring route is not automatically the least flagged, and
+// "fewest warnings" would be a false claim in that case.
+function routeRankingClaim(scored) {
+  if (!Array.isArray(scored) || !scored.length) return { kind: 'shortest', haveEvidence: false };
+  const best = scored[0];
+  const worst = scored[scored.length - 1];
+  const anyReports = scored.some((r) => r.pinsNearby > 0);
+  // One route cannot be compared against anything, so any report on it counts as evidence. With
+  // several, the scores must actually differ, or "safest" is just noise between equals.
+  const spread = best.score - worst.score;
+  const haveEvidence = anyReports && (scored.length === 1 || spread > 0.15);
+
+  if (!haveEvidence) return { kind: 'shortest', haveEvidence: false };
+  if (best.pinsNearby > 0 && best.score > 0) return { kind: 'safest', haveEvidence: true };
+  if (!best.dangerPins) return { kind: 'avoids', haveEvidence: true };
+  return {
+    kind: 'leastBad',
+    haveEvidence: true,
+    dangerPins: best.dangerPins,
+    hasFewest: scored.every((r) => r.dangerPins >= best.dangerPins),
+  };
+}
+
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -514,7 +550,7 @@ function parseWktLineStringZ(wkt) {
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    haversine, minDistanceToPaths, nearestPointOnPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore,
+    haversine, minDistanceToPaths, nearestPointOnPaths, nodeKey, buildStreetGraph, mergeWaysIntoGraph, routeSafetyScore, routeRankingClaim,
     nearestGraphNode, reachableFrom, shortestStreetPath, ratingBand, ratingDash, decodePolyline,
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,

@@ -640,6 +640,63 @@ check('app.js does not redefine anything geo.js exports', () => {
   eq(clashes.join(', '), '', `app.js redeclares geo.js name(s) and will shadow them at runtime`);
 });
 
+// --- routeRankingClaim: what the app is allowed to say about the route it recommends ------------
+// The most consequential sentence the product produces. It lived inside a render function reading
+// globals, and was wrong for a long time as a result.
+
+const route = (score, pinsNearby, dangerPins, distanceKm = 1) =>
+  ({ score, pinsNearby, dangerPins, distanceKm });
+
+check('routeRankingClaim: no reports anywhere is "shortest", not a safety claim', () => {
+  const c = geo.routeRankingClaim([route(0, 0, 0), route(0, 0, 0), route(0, 0, 0)]);
+  eq(c.kind, 'shortest');
+  eq(c.haveEvidence, false, 'the caller ranks by distance on this');
+});
+
+check('routeRankingClaim: reports that do not separate the routes are not evidence', () => {
+  // Everything scores nearly the same — picking a winner would be noise dressed as a finding.
+  const c = geo.routeRankingClaim([route(0.10, 3, 0), route(0.02, 2, 0), route(0.0, 1, 0)]);
+  eq(c.kind, 'shortest', 'a spread of 0.10 is below the 0.15 threshold');
+});
+
+check('routeRankingClaim: a single route needs no spread to count', () => {
+  eq(geo.routeRankingClaim([route(0.4, 2, 0)]).kind, 'safest', 'nothing to compare it against');
+  eq(geo.routeRankingClaim([route(0, 0, 0)]).kind, 'shortest', 'but it still needs a report');
+});
+
+check('routeRankingClaim: positive reports on the winner earn "safest"', () => {
+  const c = geo.routeRankingClaim([route(0.9, 4, 0), route(-0.5, 2, 2), route(-0.9, 3, 3)]);
+  eq(c.kind, 'safest');
+});
+
+check('routeRankingClaim: winning only because others are flagged is not "safest"', () => {
+  const c = geo.routeRankingClaim([route(0, 0, 0), route(-0.6, 2, 2), route(-0.9, 3, 3)]);
+  eq(c.kind, 'avoids', 'nobody vouched for it; it just carries no warnings');
+});
+
+check('routeRankingClaim: a flagged winner must not claim to avoid flagged streets', () => {
+  // The bug: this used to return 'avoids', so the card read "AVOIDS FLAGGED STREETS" directly
+  // above its own "1 spot on this route reported unsafe".
+  const c = geo.routeRankingClaim([route(-0.2, 1, 1), route(-0.6, 2, 2), route(-0.9, 3, 3)]);
+  eq(c.kind, 'leastBad');
+  eq(c.dangerPins, 1);
+  eq(c.hasFewest, true, 'it does genuinely carry the fewest here');
+});
+
+check('routeRankingClaim: does not claim "fewest" when it is not fewest', () => {
+  // Ordered by score, and the top route carries MORE warnings than one below it — possible
+  // because a single heavily-reported spot outweighs several lightly-reported ones.
+  const c = geo.routeRankingClaim([route(-0.2, 4, 3), route(-0.5, 1, 1), route(-0.9, 2, 2)]);
+  eq(c.kind, 'leastBad');
+  eq(c.hasFewest, false, 'saying "fewest warnings" here would be false');
+});
+
+check('routeRankingClaim: survives being handed nothing', () => {
+  eq(geo.routeRankingClaim([]).kind, 'shortest');
+  eq(geo.routeRankingClaim(null).kind, 'shortest');
+  eq(geo.routeRankingClaim(undefined).haveEvidence, false);
+});
+
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
