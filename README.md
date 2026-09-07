@@ -16,6 +16,7 @@ Valhalla, geocoding is Nominatim, and street geometry comes from Overpass.
 | `backend/` | Numbered SQL migrations for Supabase. Run them in order. |
 | `tests/` | Plain-Node tests, no framework. |
 | `server.ps1` | Tiny static file server for local testing (raw TCP; `HttpListener` rejects tunnelled hosts). |
+| `MAINTENANCE.md` | The brief for the hourly cloud agent that maintains this repo. Change it there, not in the routine. |
 
 ## Tests
 
