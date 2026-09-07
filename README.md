@@ -55,6 +55,28 @@ These are deliberately dependency-free. The client has no build step, and a suit
 would stop being run. They also encode bugs already found in real use — merge idempotency, snapping
 to unreachable streets, the exact 75% band boundary — so those cannot come back unnoticed.
 
+## Deploying
+
+`.github/workflows/ci.yml` runs the maths suite on every push and pull request. That job is worth
+more than it looks: the machine this is developed on has no Node, so the suite has only ever been
+run through a browser shim that fakes `require()`. CI is the first place it runs the way this
+README says to run it.
+
+Publishing is opt-in, because putting SafeWalk on a public URL is the owner's decision rather than
+something a push should do on its own. To turn it on:
+
+1. **Settings → Pages → Source: "GitHub Actions"**
+2. **Settings → Secrets and variables → Actions → Variables →** add `DEPLOY_PAGES` = `true`
+
+The app then lands at `https://<user>.github.io/SafeWalk/` on every push to `main`. Only
+`safewalk-app/` is published — `backend/` (SQL migrations, the edge function) and `tests/` stay out
+of the web root. Nothing in the client is secret: `config.js` holds the Supabase **anon** key, which
+is designed to be public and grants nothing on its own.
+
+Until then the only way to reach it from a phone is `server.ps1` behind a tunnel, which hands out a
+new hostname every restart and dies when the laptop sleeps. A real URL also means HTTPS, which is
+what the service worker and geolocation need — so offline support can finally be tested on a device.
+
 ## Running it locally
 
 ```powershell

@@ -1,0 +1,65 @@
+# SafeWalk CI.
+#
+# The test job matters more than it looks. The suite is dependency-free so it can be run anywhere,
+# but on the machine it is developed on there is no Node at all — it has only ever been run through
+# a browser shim that fakes require(). This is the first place it runs the way the README says to
+# run it, so it also checks that the CommonJS export block still works.
+#
+# permissions.test.js is deliberately NOT run here: it talks to the live Supabase project, and a
+# test that hits production on every push is a bad idea however read-only it is.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Pure maths tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run the geo suite
+        run: node tests/geo.test.js
+
+  deploy:
+    name: Publish to GitHub Pages
+    # Opt-in on purpose. Publishing puts SafeWalk on a public URL, which is the owner's call, not
+    # something a push should do by itself. To turn it on:
+    #   1. Settings -> Pages -> Source: "GitHub Actions"
+    #   2. Settings -> Secrets and variables -> Actions -> Variables -> new variable
+    #      DEPLOY_PAGES = true
+    # Until then this job is skipped rather than failing, so the repo does not show a red X for a
+    # deployment nobody asked for.
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_PAGES == 'true'
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      # Only the client ships. backend/ holds SQL migrations and the edge function; tests/ and
+      # server.ps1 are development tooling. None of them belong on a public web root.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: safewalk-app
+      - id: deployment
+        uses: actions/deploy-pages@v4
