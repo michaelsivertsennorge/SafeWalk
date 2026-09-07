@@ -15,3 +15,6 @@ safewalk-app/_tmp_test.js
 # Scratch copy of the permission suite, staged only to run it in a browser.
 safewalk-app/_tmp_perm.js
 safewalk-app/_tmp_rep.sql
+
+# Diagnostic output from server.ps1 -LogRequests. Local only.
+requests.log
