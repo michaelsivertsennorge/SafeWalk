@@ -251,6 +251,10 @@ html, body {
   box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 .legend-row { display: flex; align-items: center; gap: 6px; }
+/* The lit-street row explains itself when there is nothing to show — "none recorded here",
+   "unavailable right now", "zoom in to load". Dimmed so it reads as a note about the layer rather
+   than as another key entry claiming something is drawn on the map. */
+.legend-row .legend-muted { opacity: 0.65; font-style: italic; }
 .legend-swatch {
   width: 14px;
   height: 3px;

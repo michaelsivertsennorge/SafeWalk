@@ -281,7 +281,9 @@ async function copyText(text) {
       const ok = document.execCommand('copy');
       document.body.removeChild(ta);
       return ok;
-    } catch {
+    setLightingLegend(drawn ? 'ok' : 'none', drawn);
+  } catch {
+    setLightingLegend('failed');
       return false;
     }
   }
@@ -319,8 +321,26 @@ function boundsKey(b) {
 
 
 let loggedLightingFailure = false;
+// The map key used to read "Lit streets (official data)" whether or not a single lit street had
+// been drawn, so an empty map looked identical whether nobody has mapped lighting here, the API
+// refused us, or you are simply zoomed too far out. On a map that is mostly empty to begin with,
+// a legend entry for a layer that is not there is worse than no entry: it makes the user doubt
+// their own eyes rather than the data.
+function setLightingLegend(state, count) {
+  const el = document.getElementById('legendLighting');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Lit streets — checking…',
+    ok: `Lit streets (official data)${count ? ` — ${count} here` : ''}`,
+    none: 'Lit streets — none recorded in this view',
+    zoom: 'Lit streets — zoom in to load',
+    failed: 'Lit streets — data unavailable right now',
+  }[state] || 'Lit streets (official data)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadLighting() {
-  if (map.getZoom() < 14) return; // avoid slow, huge queries when zoomed out
+  if (map.getZoom() < 14) { setLightingLegend('zoom'); return; } // huge queries when zoomed out
   const b = map.getBounds();
   const key = boundsKey(b);
   if (key === lightingLoadedFor) return;
@@ -335,6 +355,7 @@ async function loadLighting() {
       // embedded webviews are not, and the layer then just never appears. Say so in the console
       // rather than leaving the map key promising lit streets that will never arrive.
       lightingLoadedFor = null;   // let a later attempt retry rather than caching the failure
+      setLightingLegend('failed');
       if (!loggedLightingFailure) {
         loggedLightingFailure = true;
         console.warn('SafeWalk: could not load lit-street data from NVDB. If this browser sends an ' +
@@ -343,6 +364,7 @@ async function loadLighting() {
       return;
     }
     const data = await res.json();
+    let drawn = 0;
     lightingLayer.clearLayers();
     (data.objekter || []).forEach((obj) => {
       const wkt = obj.geometri && obj.geometri.wkt;
@@ -355,9 +377,12 @@ async function loadLighting() {
         opacity: 0.5,
         interactive: false,
       }).addTo(lightingLayer);
+      drawn++;
     });
+    // Empty and broken look identical on the map; only the key can tell them apart.
+    setLightingLegend(drawn ? 'ok' : 'none', drawn);
   } catch {
-    /* supplementary layer — ignore failures */
+    setLightingLegend('failed');    // supplementary layer: explain it, never break the map for it
   }
 }
 map.on('moveend', loadLighting);
