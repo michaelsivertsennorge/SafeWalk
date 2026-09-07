@@ -33,14 +33,10 @@ jobs:
 
   deploy:
     name: Publish to GitHub Pages
-    # Opt-in on purpose. Publishing puts SafeWalk on a public URL, which is the owner's call, not
-    # something a push should do by itself. To turn it on:
-    #   1. Settings -> Pages -> Source: "GitHub Actions"
-    #   2. Settings -> Secrets and variables -> Actions -> Variables -> new variable
-    #      DEPLOY_PAGES = true
-    # Until then this job is skipped rather than failing, so the repo does not show a red X for a
-    # deployment nobody asked for.
-    if: github.ref == 'refs/heads/main' && vars.DEPLOY_PAGES == 'true'
+    # Publishing was opt-in behind a DEPLOY_PAGES variable until the owner turned Pages on
+    # themselves (2026-09-07), which is the consent that gate existed to wait for. Now every push
+    # to main publishes. Only safewalk-app/ ships — backend/ and tests/ stay out of the web root.
+    if: github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     environment:

@@ -62,11 +62,8 @@ more than it looks: the machine this is developed on has no Node, so the suite h
 run through a browser shim that fakes `require()`. CI is the first place it runs the way this
 README says to run it.
 
-Publishing is opt-in, because putting SafeWalk on a public URL is the owner's decision rather than
-something a push should do on its own. To turn it on:
-
-1. **Settings → Pages → Source: "GitHub Actions"**
-2. **Settings → Secrets and variables → Actions → Variables →** add `DEPLOY_PAGES` = `true`
+Pages is enabled, so every push to `main` publishes to
+<https://michaelsivertsennorge.github.io/SafeWalk/> once the tests pass.
 
 The app then lands at `https://<user>.github.io/SafeWalk/` on every push to `main`. Only
 `safewalk-app/` is published — `backend/` (SQL migrations, the edge function) and `tests/` stay out

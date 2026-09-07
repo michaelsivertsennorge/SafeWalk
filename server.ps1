@@ -1,6 +1,9 @@
 param(
   [int]$Port = 5566,
-  [string]$Root = "$PSScriptRoot\safewalk-app"
+  [string]$Root = "$PSScriptRoot\safewalk-app",
+  # Diagnostic only: writes requests.log, so a device reporting "nothing shows up" can be traced
+  # to the build it actually fetched rather than guessed at.
+  [switch]$LogRequests
 )
 
 # Raw TCP server instead of System.Net.HttpListener: HttpListener (via http.sys) validates the
@@ -37,9 +40,21 @@ while ($true) {
     $reader = New-Object System.IO.StreamReader($stream)
     $requestLine = $reader.ReadLine()
     if ([string]::IsNullOrEmpty($requestLine)) { continue }  # preconnect with no request; drop it
+    $headerLines = New-Object System.Collections.Generic.List[string]
     while ($true) {
       $line = $reader.ReadLine()
       if ([string]::IsNullOrEmpty($line)) { break }
+      $headerLines.Add($line)
+    }
+
+    # Request log. Off unless -LogRequests is passed, because the normal case does not need it —
+    # but when someone reports "the app shows nothing on my phone" there is otherwise no way to
+    # tell whether their device fetched the current build, an old cached one, or never arrived.
+    if ($LogRequests) {
+      $ua = ($headerLines | Where-Object { $_ -match '^User-Agent:' }) -replace '^User-Agent:\s*', ''
+      $short = if ($ua -match 'iPhone|iPad') { 'iOS' } elseif ($ua -match 'Android') { 'Android' } else { 'other' }
+      "{0}  {1}  [{2}]" -f (Get-Date -Format 'HH:mm:ss'), $requestLine, $short |
+        Out-File -FilePath "$PSScriptRoot\requests.log" -Append -Encoding utf8
     }
 
     $path = "/index.html"
