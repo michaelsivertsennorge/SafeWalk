@@ -265,30 +265,6 @@ function showConfirm(message, { okLabel = 'Confirm', title = 'Are you sure?' } =
   return new Promise((resolve) => { confirmResolve = resolve; });
 }
 
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    setLightingLegend(drawn ? 'ok' : 'none', drawn);
-  } catch {
-    setLightingLegend('failed');
-      return false;
-    }
-  }
-}
-
 // Three fixed bands instead of a continuous gradient: >75% safe reads unambiguously as safe,
 // <50% safe (i.e. more than half unsafe reports) reads unambiguously as unsafe, and the wide
 // middle ground where opinion is genuinely split shows as a distinct "mixed" color rather than
