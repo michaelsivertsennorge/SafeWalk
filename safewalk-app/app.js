@@ -103,13 +103,19 @@ const WIDE_RADIUS_M = 500;
 // against Overpass ranged from 0.6s to over 10s depending on server load and how recently we had
 // asked — so the only way this reliably feels fast is to already have the answer. OSM road geometry
 // barely changes, so a week-old copy is fine.
-const STREET_CACHE_KEY = 'safewalk_street_cache';
+// Cached ways only mean anything alongside the query that produced them, so the key carries a
+// version. Dropping [name] from overpassQuery on 2026-09-07 made every cached entry wrong — a
+// week of stale, disconnected street networks that no amount of updating the app would have
+// cleared, because the cache outlives the code. Bump this whenever overpassQuery changes.
+const STREET_CACHE_KEY = 'safewalk_street_cache_v2';
+const STREET_CACHE_LEGACY_KEYS = ['safewalk_street_cache'];
 const STREET_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const STREET_CACHE_MAX = 8; // a few square kilometres; comfortably inside the localStorage budget
 
 let streetNetworkCache = loadStreetCache(); // [{ lat, lng, radius, ways, at }]
 
 function loadStreetCache() {
+  try { STREET_CACHE_LEGACY_KEYS.forEach((k) => localStorage.removeItem(k)); } catch {}
   try {
     const raw = JSON.parse(localStorage.getItem(STREET_CACHE_KEY) || '[]');
     const fresh = raw.filter((e) => e && e.at && Date.now() - e.at < STREET_CACHE_TTL_MS && Array.isArray(e.ways));
@@ -148,8 +154,23 @@ function rememberStreets(lat, lng, radius, ways) {
 function overpassQuery(lat, lng, radius) {
   // Filtering unwalkable roads in the query rather than after it keeps the payload down; there is
   // no point downloading a motorway we would only throw away.
+  //
+  // Unnamed ways ARE downloaded, and that matters more than it looks. This asked for [name] until
+  // 2026-09-07, which meant slip roads, service roads, alleys, footpaths and roundabout links —
+  // the things that physically join one named street to the next — were never fetched. Two streets
+  // that plainly connect in real life then had no path between them, which is exactly what was
+  // reported from a walk.
+  //
+  // Measured around Frogner: with [name], 5% of the network was reachable from a starting point
+  // and the target could not be reached at all. Without it, 99% and the target reachable. In dense
+  // central Oslo it made no difference — which is why an earlier check nearly dismissed it — so
+  // this only shows up away from the centre, i.e. across most of the country.
+  //
+  // The cost is real and worth stating: at the 200m picker radius the payload goes from about
+  // 18KB to 89KB, and the request from 0.46s to 0.59s. Five times the bytes for a feature that
+  // otherwise does not work outside a city centre.
   const excluded = [...UNWALKABLE].join('|');
-  return `[out:json][timeout:25];way(around:${radius},${lat},${lng})[highway][name][highway!~"^(${excluded})$"];out geom;`;
+  return `[out:json][timeout:25];way(around:${radius},${lat},${lng})[highway][highway!~"^(${excluded})$"];out geom;`;
 }
 
 const inFlightOverpass = new Map(); // dedupes concurrent identical requests (prefetch racing a tap)
@@ -170,7 +191,10 @@ async function fetchOverpassWays(lat, lng, radius) {
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json(); // a rate-limited mirror answers with XML, so this throws too
       const ways = (data.elements || []).filter(
-        (el) => el.type === 'way' && el.geometry && el.tags && el.tags.name && !UNWALKABLE.has(el.tags.highway)
+        // No name requirement here either. It used to demand one, which silently undid the point
+        // of dropping [name] from the query — the unnamed alleys and slip roads that join streets
+        // together arrived and were thrown away on the doorstep.
+        (el) => el.type === 'way' && el.geometry && el.tags && !UNWALKABLE.has(el.tags.highway)
       );
       if (!ways.length) throw new Error('empty');
       return ways;
@@ -1077,7 +1101,7 @@ function addWaypoint(key) {
   // Drop the first point: it's the one we're already standing on.
   trimState.path = trimState.path.length ? [...trimState.path, ...pts.slice(1)] : pts;
   trimState.waypoints.push(key);
-  leg.names.forEach((n) => trimState.streetNames.add(n));
+  leg.names.forEach((n) => { if (n) trimState.streetNames.add(n); });   // unnamed connectors have no label
   trimState.legLengths = trimState.legLengths || [];
   trimState.legLengths.push(pts.length - 1);
   redrawTrimActive();
@@ -1085,25 +1109,74 @@ function addWaypoint(key) {
 }
 
 // A tap while the picker is open: snap to the nearest street node and extend the chain.
-function handleStreetPick(lat, lng) {
+// Snap a tap to a node, restricted to what is walkable from the current anchor once one exists.
+// Reach is recomputed whenever the anchor changes or new streets have been merged in.
+function snapToGraph(lat, lng) {
   const anchor = trimState.waypoints[trimState.waypoints.length - 1];
-
-  // Once a start point exists, only snap to streets actually walkable from it. Recomputed whenever
-  // the anchor changes or the background widen merges new streets in.
   if (anchor && (trimState.reachAnchor !== anchor || !trimState.reach || trimState.reachWays !== trimState.graph.wayIds.size)) {
     trimState.reach = reachableFrom(trimState.graph, anchor);
     trimState.reachAnchor = anchor;
     trimState.reachWays = trimState.graph.wayIds.size;
   }
-
   // Widen the snap radius when restricted, so a tap near a stranded fragment still finds the real
   // street behind it rather than giving up.
-  const key = anchor
+  return anchor
     ? nearestGraphNode(trimState.graph, lat, lng, 90, trimState.reach)
     : nearestGraphNode(trimState.graph, lat, lng, 60);
+}
+
+// Beyond this, fetching the whole corridor in one go is a big enough Overpass query to be worse
+// than asking for a tap in between — which is what the message already suggests.
+const MAX_EXTEND_RADIUS_M = 1200;
+
+// Grow the network to cover the ground between the anchor and where the person just tapped.
+//
+// Fetching only around the tap is not enough, and that mistake is instructive: it leaves the middle
+// of the walk undownloaded, so the two ends sit in separate islands and the router correctly
+// reports no path between them. Measured on a 720m tap — the graph grew from 33 ways to 53 and the
+// waypoint still would not attach. The corridor is what matters, so the request is centred on the
+// midpoint with a radius that reaches both ends.
+async function extendTowards(lat, lng) {
+  const anchorKey = trimState.waypoints[trimState.waypoints.length - 1];
+  const anchor = anchorKey ? trimState.graph.nodes.get(anchorKey) : null;
+  const before = trimState.graph.wayIds.size;
+
+  const ways = anchor
+    ? await fetchOverpassWays(
+        (anchor.lat + lat) / 2,
+        (anchor.lng + lng) / 2,
+        Math.min(MAX_EXTEND_RADIUS_M, haversine(anchor.lat, anchor.lng, lat, lng) / 2 + NEAR_RADIUS_M))
+    : await fetchOverpassWays(lat, lng, NEAR_RADIUS_M);
+
+  if (!trimState) return false;                    // picker closed while this was in flight
+  if (!ways || !ways.length) return false;
+  mergeWaysIntoGraph(trimState.graph, ways);
+  return trimState.graph.wayIds.size > before;
+}
+
+async function handleStreetPick(lat, lng) {
+  const hint = document.getElementById('trimHint');
+  const said = hint ? hint.textContent : '';
+  const whileLoading = async (work) => {
+    if (hint) hint.textContent = 'Loading more streets…';
+    const grew = await work();
+    if (hint && trimState) hint.textContent = said;
+    return grew;
+  };
+
+  // The picker opens on streets within 200m of where it started and widens to 500m — but always
+  // around that starting point, never following you. Tracing a longer walk therefore taps past the
+  // edge of what was ever downloaded, and the app said "no connected street there" about a road
+  // that is perfectly connected in real life. Reported from an actual walk.
+  let key = snapToGraph(lat, lng);
+  if (!key && await whileLoading(() => extendTowards(lat, lng))) {
+    if (!trimState) return;
+    key = snapToGraph(lat, lng);                   // reach recomputes itself: wayIds.size changed
+  }
+  if (!trimState) return;
 
   if (!key) {
-    showToast(anchor
+    showToast(trimState.waypoints.length
       ? 'No connected street there — tap somewhere along a road you could walk to.'
       : 'No street there — tap closer to a road.');
     return;
@@ -1115,8 +1188,15 @@ function handleStreetPick(lat, lng) {
     return;
   }
   if (!addWaypoint(key)) {
-    showToast("Can't reach that street on foot from here — try a point in between.");
-    return;
+    // Snapped to a real street, but no route to it — usually because the ground in between is
+    // still missing rather than because you cannot walk there. Fill the corridor and try again.
+    const grew = await whileLoading(() => extendTowards(lat, lng));
+    if (!trimState) return;
+    const retry = grew ? snapToGraph(lat, lng) : null;
+    if (!retry || !addWaypoint(retry)) {
+      showToast("Can't reach that street on foot from here — try a point in between.");
+      return;
+    }
   }
   buzz();
 }
@@ -1130,7 +1210,7 @@ function undoWaypoint() {
   trimState.streetNames = new Set();
   for (let i = 1; i < trimState.waypoints.length; i++) {
     const leg = shortestStreetPath(trimState.graph, trimState.waypoints[i - 1], trimState.waypoints[i]);
-    if (leg) leg.names.forEach((n) => trimState.streetNames.add(n));
+    if (leg) leg.names.forEach((n) => { if (n) trimState.streetNames.add(n); });   // unnamed connectors have no label
   }
   if (trimState.waypoints.length < 2) trimState.path = [];
   redrawTrimActive();
