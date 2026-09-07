@@ -17,8 +17,14 @@ rating colours used as text. Blossom's amber started at 3.43:1 and was darkened 
 does not apply.
 
 Still worth doing here:
-- Buttons are still fairly plain. "Prettier buttons" was part of the ask and has not really been
-  addressed — only the palette has.
+- Buttons: the "prettier buttons" ask is done, and this entry was stale. The bottom bar is
+  whole-coloured pastel with no icons, as asked; primary actions are filled, and an audit of all 41
+  buttons across all 11 sheets on 2026-09-08 found three deliberate corner radii (9/12/14px) and no
+  overflow at 375px.
+  That audit did find something this file had been claiming was already true: six controls were
+  under the 44px touch minimum — the "Just this spot"/"Whole street" and "Walking"/"Biking" toggles
+  at 36px, and both map-pin buttons at 42px. Those are the choice between marking a spot and
+  marking a whole street, tapped one-handed in the dark. All 41 now meet it.
 - No per-theme testing on a real phone outdoors yet.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
@@ -73,7 +79,9 @@ Still worth doing here:
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is
-honoured via `prefers-reduced-motion`, and touch targets meet 44px. All four themes pass WCAG AA
+honoured via `prefers-reduced-motion`. Touch targets meet 44px — but that claim stood here while
+six controls did not, and was only true after an audit on 2026-09-08 measured every button in the
+app rather than assuming. All four themes pass WCAG AA
 contrast for body text, dim text and the three rating colours used as text.
 
 The accessibility tree was walked on 2026-09-07 — that is the structure a screen reader actually

@@ -476,8 +476,13 @@ textarea { min-height: 64px; resize: vertical; }
   border-radius: 12px;
   padding: 4px;
 }
+/* 44px, not 36. These are the choice between marking a spot and marking a whole street, and
+   between walking and biking — tapped one-handed, at night, often while moving. They were the only
+   controls in the app still under the touch minimum, which ROADMAP had claimed was met everywhere.
+   The toggle's 4px padding is subtracted so the row does not grow by more than the buttons do. */
 .mode-btn {
   flex: 1;
+  min-height: 44px;
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -492,8 +497,8 @@ textarea { min-height: 64px; resize: vertical; }
 .field-row input { margin-bottom: 10px; }
 .pin-btn {
   flex: none;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   margin-bottom: 10px;
   border-radius: 12px;
   background: var(--bg-elev-2);
