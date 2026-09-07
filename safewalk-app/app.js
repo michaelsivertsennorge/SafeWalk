@@ -469,13 +469,36 @@ map.on('moveend', loadLighting);
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 
+// An empty map key here used to mean two completely different things: "checked, nothing nearby"
+// and "never checked" — every early return below left the legend on its static default, so a
+// blocked CDN (`sb` null) or a failed query looked exactly like a quiet night. That is the same
+// mistake the lit-streets legend was fixed for, and the police layer is the more dangerous place
+// for it: it exists specifically to warn about an ongoing operation near you.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Police reports — checking…',
+    ok: `Police reports — ${count} recent`,
+    none: 'Police reports — none recent',
+    failed: 'Police reports — data unavailable right now',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadPoliceEvents() {
-  if (!sb) return;   // the pins path reports this; one banner is enough
-  const { data, error } = await sb
-    .from('police_events')
-    .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
-    .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  setPoliceLegend('loading');
+  if (!sb) { setPoliceLegend('failed'); return; }   // the pins path shows its own banner for this
+  let data, error;
+  try {
+    ({ data, error } = await sb
+      .from('police_events')
+      .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
+      .gt('expires_at', new Date().toISOString()));
+  } catch (err) {
+    error = err;
+  }
+  if (error || !Array.isArray(data)) { setPoliceLegend('failed'); return; }
 
   policeEvents = data
     .map((r) => {
@@ -483,6 +506,7 @@ async function loadPoliceEvents() {
       return p ? { ...r, lat: p.lat, lng: p.lng } : null;
     })
     .filter(Boolean);
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
   renderPoliceEvents();
   checkPoliceProximity();
 }

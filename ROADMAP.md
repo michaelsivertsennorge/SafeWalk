@@ -97,6 +97,19 @@ Still open here:
   - Police events are shown but deliberately NOT folded into the route score. An official report is
     evidence a person should weigh themselves, and silently moving a route because of one would hide
     the reason. Worth revisiting with real usage.
+  - **Fixed a silent failure: a failed load of police events looked identical to a quiet night.**
+    `loadPoliceEvents()` had three early returns — no Supabase client, a query error, a malformed
+    response — and every one of them just left the map key on its static "Police report (recent)"
+    line with no circles drawn, which reads as "checked, nothing nearby." That is the same class of
+    bug the lit-streets legend was fixed for (see "Lit streets" below), and worse here: this layer
+    exists specifically to warn about an operation ongoing near you, so a silent no-op is a false "all
+    clear." The map key now carries a live status — "checking…", "N recent", "none recent", or "data
+    unavailable right now" — mirroring `setLightingLegend`'s already-working pattern, and the query is
+    now wrapped so a thrown network error hits the same "failed" path as a returned `error`.
+    **Not verified: any of it running.** No browser here, so none of "checking…" appearing on load,
+    the count rendering after a real fetch, or "data unavailable" actually showing when the query
+    fails has been watched — only read. Worth a look next time someone has the app open with
+    dev tools, and worth confirming the "N recent" count matches what `openPoliceSheet` lists.
 - **Google sign-in** alongside email/password. Needs Google Cloud console setup.
 - **Reputation: the mechanism is verified, the numbers are still a guess.** `backend/tests/reputation.sql`
   was run against the live database on 2026-09-07 and all ten checks passed, including the ones no
