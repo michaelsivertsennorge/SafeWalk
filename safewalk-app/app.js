@@ -399,7 +399,7 @@ const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 
 async function loadPoliceEvents() {
-  if (!sb) return;
+  if (!sb) return;   // the pins path reports this; one banner is enough
   const { data, error } = await sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
@@ -2570,8 +2570,29 @@ function pinFetchCentre() {
   return { lat: c.lat, lng: c.lng };
 }
 
+// An empty map is not a neutral thing to show. It reads as "nobody has reported anything here",
+// which is the opposite of the truth when the real answer is "this app could not reach its data" —
+// and on a safety map that is the most dangerous sentence it could accidentally say. The client is
+// loaded from a CDN, so a blocked or slow jsdelivr on a mobile network leaves `sb` null and every
+// cloud call a silent no-op: working map, working location dot, no pins, no explanation.
+function reportNoBackend() {
+  const cached = loadCachedPins();
+  if (cached) {
+    pins = cached.rows.map((r) => rowToPin(r, new Set()));
+    renderPins();
+    renderMyReports();
+    showStaleBanner(cached.at);
+    return;
+  }
+  const el = document.getElementById('staleBanner');
+  if (el) {
+    el.textContent = 'Could not reach the safety data — this map is not showing reports. Check your connection and reload.';
+    el.hidden = false;
+  }
+}
+
 async function refreshPinsFromCloud({ force = false } = {}) {
-  if (!sb) return;
+  if (!sb) return reportNoBackend();
   const centre = pinFetchCentre();
   if (!force && lastPinFetchAt &&
       haversine(centre.lat, centre.lng, lastPinFetchAt.lat, lastPinFetchAt.lng) < PIN_REFETCH_AFTER_M) {
