@@ -62,17 +62,15 @@ more than it looks: the machine this is developed on has no Node, so the suite h
 run through a browser shim that fakes `require()`. CI is the first place it runs the way this
 README says to run it.
 
-Pages is enabled, so every push to `main` publishes to
-<https://michaelsivertsennorge.github.io/SafeWalk/> once the tests pass.
+Pages is on, so every push to `main` publishes to
+<https://michaelsivertsennorge.github.io/SafeWalk/> once the tests pass. Only `safewalk-app/`
+ships — `backend/` (SQL migrations, the edge function) and `tests/` stay out of the web root.
+Nothing in the client is secret: `config.js` holds the Supabase **anon** key, which is designed to
+be public and grants nothing on its own.
 
-The app then lands at `https://<user>.github.io/SafeWalk/` on every push to `main`. Only
-`safewalk-app/` is published — `backend/` (SQL migrations, the edge function) and `tests/` stay out
-of the web root. Nothing in the client is secret: `config.js` holds the Supabase **anon** key, which
-is designed to be public and grants nothing on its own.
-
-Until then the only way to reach it from a phone is `server.ps1` behind a tunnel, which hands out a
-new hostname every restart and dies when the laptop sleeps. A real URL also means HTTPS, which is
-what the service worker and geolocation need — so offline support can finally be tested on a device.
+That URL matters beyond convenience. It is HTTPS, which is what service workers and geolocation
+require, so the offline path can finally be tested on a real device — and it does not die when the
+laptop sleeps, which is what happened to every tunnel link before it.
 
 ## Running it locally
 
