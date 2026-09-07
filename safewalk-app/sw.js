@@ -15,6 +15,39 @@ const CACHE_NAME = 'safewalk-shell-v3';
 const SHELL_FILES = ['./', 'index.html', 'style.css', 'config.js', 'geo.js', 'app.js',
   'manifest.json', 'icon.svg', 'icon-180.png', 'icon-512.png', 'icon-maskable-512.png'];
 
+// Map tiles, in their own cache. Without them an offline map is marks floating on a blank grey
+// page — which looks broken and, worse, gives no sense of where any of them are. Losing signal on
+// the way home is the situation this app exists for, so it is the one place offline has to work.
+//
+// Only tiles already fetched for a view someone actually looked at are kept. Nothing is prefetched
+// and no area is walked ahead of time: the OpenStreetMap tile usage policy asks that bulk
+// downloading stay off their servers, and it is their infrastructure being given away for free.
+//
+// Separate from the shell cache so a shell version bump does not throw away someone's map, and so
+// the trim below cannot touch the files the app needs to boot.
+const TILE_CACHE = 'safewalk-tiles-v1';
+// Tiles run 10-30KB, so this is roughly 5-12MB — a few square kilometres at walking zoom, which is
+// what "the way home" actually means. Small enough not to crowd a phone.
+const TILE_CACHE_MAX = 400;
+const isTileRequest = (url) => /(^|\.)tile\.openstreetmap\.org$/.test(url.hostname);
+
+async function cacheTile(request, response) {
+  try {
+    const cache = await caches.open(TILE_CACHE);
+    await cache.put(request, response);
+    // Trimming walks every key, so it happens occasionally rather than on every tile — panning a
+    // map fires dozens of these a second and the cost would land on the person scrolling.
+    if (Math.random() < 0.05) {
+      const keys = await cache.keys();
+      const excess = keys.length - TILE_CACHE_MAX;
+      if (excess > 0) await Promise.all(keys.slice(0, excess).map((k) => cache.delete(k)));
+    }
+  } catch {
+    // Quota, private mode, or storage disabled. The map still works online; it just will not
+    // survive losing signal, which is not worth breaking the page over.
+  }
+}
+
 // cache.addAll() is all-or-nothing: one 404 rejects the whole thing, and with the rejection
 // swallowed that leaves offline support silently switched off — no error, no cached shell, and
 // nothing to notice until someone loses signal and the app will not open. Every file is currently
@@ -32,14 +65,35 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+    // Keep both caches. This used to delete everything that was not the shell, which would have
+    // thrown away the whole tile cache on every version bump — the map going blank offline for no
+    // reason the person could see.
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((k) => k !== CACHE_NAME && k !== TILE_CACHE).map((k) => caches.delete(k))
+    ))
   );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (event.request.method !== 'GET') return;
+
+  // Tiles are cross-origin, so they have to be handled before the same-origin gate below.
+  // Network first, exactly like everything else: online you get the real tile, and the cached copy
+  // only ever answers when the network does not. Leaflet requests these as images, so the response
+  // is opaque — status 0, unreadable — which is fine to store and hand back to an <img>, but means
+  // res.ok cannot be checked here the way it is for the shell.
+  if (isTileRequest(url)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => { cacheTile(event.request, res.clone()); return res; })
+        .catch(async () => (await caches.match(event.request, { cacheName: TILE_CACHE })) || Response.error())
+    );
+    return;
+  }
+
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
     fetch(event.request)

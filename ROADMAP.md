@@ -131,11 +131,20 @@ a control, and enlarging it would put a tap target over the map.
   not the cause here, and the speculative fix was reverted.) The consequence is that the whole
   offline path — install, precache, the fall back to cache when the network drops — rests on
   reading the code. **Worth testing on a real phone in airplane mode before the feature is sold.**
-- **Offline is partly handled.** The last successfully loaded ratings are cached on the device and
-  shown with an age banner when the network is gone, and the street network cache persists for a
-  week. Still missing: map tiles are not cached, so an offline user sees marks floating on a blank
-  background. Any tile caching must respect the OSM tile usage policy — cache what has already been
-  viewed, never bulk-prefetch.
+- **Offline: written, not yet witnessed.** The last successfully loaded ratings are cached and shown
+  with an age banner, the street network cache persists for a week, and as of 2026-09-07 map tiles
+  are cached too — previously an offline user saw marks floating on a blank grey page, which looks
+  broken and gives no sense of where anything is. Only tiles already fetched for a view someone
+  looked at are kept, nothing is prefetched, and the cache is capped at 400 tiles (~5-12MB), which
+  is what the OSM tile usage policy asks for.
+  Verified what could be here: the file parses, the tile matcher accepts the three OSM subdomains
+  and rejects `eviltile.openstreetmap.org`, `tile.openstreetmap.org.attacker.com` and our own
+  origin, tiles are handled before the same-origin gate, activate keeps both caches (deleting
+  everything but the shell would have thrown away the map on every version bump), and the trim was
+  run against the real Cache API — 430 entries in, 400 out, oldest evicted, newest kept.
+  **Not verified: any of it actually running.** Service worker registration is blocked in this
+  development browser, proven by an A/B against an unrelated server. Airplane mode on a phone,
+  now that the app is on HTTPS, is the only thing that settles it.
 - **Test coverage is thin.** `tests/geo.test.js` now covers the pure maths in `safewalk-app/geo.js`
   (22 assertions: distances, street graph, shortest paths, polyline decoding, rating bands). Run it
   with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the auth gates, the
