@@ -103,12 +103,22 @@ const OVERPASS_MIRRORS = [
   'https://overpass-api.de/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
+// How long the first mirror gets before the second is asked as well. Long enough that a healthy
+// mirror is never doubled up on, short enough that a stalled one does not hold up the picker.
+const HEDGE_AFTER_MS = 2500;
 
 // Radius dominates the cost, roughly quadratically. Measured in central Oslo: 300m came back in
 // 2.0s and 25KB; 700m took 14.4s and then failed outright. So the picker opens on a small fast
 // fetch and quietly widens afterwards — see startStreetPicker.
 const NEAR_RADIUS_M = 200;
 const WIDE_RADIUS_M = 500;
+// The startup guess is deliberately smaller than the widen. Including unnamed connecting ways on
+// 2026-09-07 made these queries about five times heavier — measured in central Oslo: 500m is 1.1MB,
+// 300m is 494KB, 200m is 204KB. WIDE_RADIUS_M is fine where it is used, because by then the person
+// has opened the picker and is waiting. Spending 1.1MB of someone's data plan the moment they open
+// a safety app, on a street they may never mark, is a different thing entirely — and since a tap
+// beyond the loaded network now fetches what it needs on demand, this is only ever saving a second.
+const PREFETCH_RADIUS_M = 300;
 
 // Street geometry is cached across sessions, not just within one. Measured, the same 200m query
 // against Overpass ranged from 0.6s to over 10s depending on server load and how recently we had
@@ -214,8 +224,25 @@ async function fetchOverpassWays(lat, lng, radius) {
     }
   };
 
-  // Promise.any settles on the first mirror that succeeds and ignores the ones still struggling.
-  const job = Promise.any(OVERPASS_MIRRORS.map(attempt))
+  // Hedged rather than raced. Asking every mirror at once did protect against a dead one, but it
+  // downloaded the whole answer from each — and since unnamed connecting ways were included on
+  // 2026-09-07 a single answer can be several hundred KB, on what may be someone's mobile data.
+  //
+  // So the second mirror only starts if the first has not answered within HEDGE_AFTER_MS, or has
+  // already failed — no point waiting out the hedge on a mirror that is plainly down. The usual
+  // case now pays for one response instead of two; the protection is unchanged.
+  const backupTimer = { id: null };
+  const first = attempt(OVERPASS_MIRRORS[0]);
+  const second = new Promise((resolve, reject) => {
+    const start = () => attempt(OVERPASS_MIRRORS[1]).then(resolve, reject);
+    backupTimer.id = setTimeout(start, HEDGE_AFTER_MS);
+    first.then(
+      () => clearTimeout(backupTimer.id),          // already answered; never ask the second
+      () => { clearTimeout(backupTimer.id); start(); }
+    );
+  });
+
+  const job = Promise.any([first, second])
     .then((ways) => { rememberStreets(lat, lng, radius, ways); return ways; })
     .catch(() => null) // every mirror failed
     .finally(() => inFlightOverpass.delete(key));
@@ -240,9 +267,18 @@ function prefetchStreetNetwork(lat, lng) {
 // already knows roughly which streets you might mark before you have tapped anything. Fetching the
 // wide radius around your position at startup means the picker usually opens from cache instead of
 // waiting on a server whose latency we measured swinging between 0.6s and 10s.
+// Respect a phone that has asked us not to spend its data on guesses. Data Saver being on, or a 2G
+// connection, both mean the person is counting bytes — and this request is speculative by nature.
+function dataIsPrecious() {
+  const c = navigator.connection;
+  if (!c) return false;
+  return !!c.saveData || ['slow-2g', '2g'].includes(c.effectiveType);
+}
+
 function prefetchAroundUser(lat, lng) {
-  if (cachedCovering(lat, lng, WIDE_RADIUS_M)) return; // already covered, don't spend the request
-  setTimeout(() => fetchOverpassWays(lat, lng, WIDE_RADIUS_M).catch(() => {}), 2500);
+  if (dataIsPrecious()) return;                             // they asked; the on-demand path still works
+  if (cachedCovering(lat, lng, PREFETCH_RADIUS_M)) return;  // already covered, don't spend the request
+  setTimeout(() => fetchOverpassWays(lat, lng, PREFETCH_RADIUS_M).catch(() => {}), 2500);
 }
 
 // Only people who are actually near a street can rate it — keeps ratings grounded in lived experience
