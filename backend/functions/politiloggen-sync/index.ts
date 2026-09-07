@@ -308,7 +308,24 @@ Deno.serve(async (req) => {
       .in('external_id', relevant.map((c) => c.external_id));
     const settled = new Set((existing ?? []).filter((e: any) => !e.is_active).map((e: any) => e.external_id));
 
-    const todo = relevant.filter((c) => !settled.has(c.external_id));
+    // Incidents we have already decided we cannot place well enough to draw. Without this the same
+    // doomed lookup is sent to Nominatim every hour forever — observed in the live logs as
+    // Kristiansand and Bærum reporting "relevant 1, dropped 1" on every run, indefinitely. Nominatim
+    // is free and asks not to be queried systematically, and a 429 from it costs us the incidents we
+    // could have placed.
+    const { data: failures } = await admin
+      .from('police_geocode_failures').select('external_id,message_count')
+      .in('external_id', relevant.map((c) => c.external_id));
+    const gaveUpAt = new Map((failures ?? []).map((f: any) => [f.external_id, f.message_count ?? 1]));
+
+    const todo = relevant.filter((c) => {
+      if (settled.has(c.external_id)) return false;
+      const seen = gaveUpAt.get(c.external_id);
+      // A thread that has gained a message since is worth another try: the update often names the
+      // street the first message left out, which is the whole reason street extraction exists.
+      return seen === undefined || (c.message_count ?? 1) > seen;
+    });
+    const skippedGivenUp = relevant.length - todo.length - settled.size;
     const budget = { left: MAX_GEOCODES_PER_RUN };
     for (const c of todo) await locate(c, budget);
 
@@ -322,7 +339,7 @@ Deno.serve(async (req) => {
         ok: true, dry: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN',
         messages: list.length, incidents: all.length, categoryBreakdown,
         afterCategoryFilter: byCategory.length, skippedTooOld: tooOld,
-        stillRelevant: relevant.length, alreadySettled: settled.size,
+        stillRelevant: relevant.length, alreadySettled: settled.size, skippedGivenUp,
         geocodeCallsUsed: MAX_GEOCODES_PER_RUN - budget.left,
         wouldWrite: placeable.length, droppedCount: dropped.length,
         located: placeable.map((c) => ({
@@ -354,7 +371,22 @@ Deno.serve(async (req) => {
       written = rows.length;
     }
 
-    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, written, dropped: dropped.length });
+    // Remember what we could not place, so the next run does not ask Nominatim the same question.
+    if (dropped.length) {
+      await admin.from('police_geocode_failures').upsert(
+        dropped.map((c) => ({
+          external_id: c.external_id,
+          municipality: c.municipality,
+          area: c.area,
+          reason: (c.rejected || 'no usable location').slice(0, 300),
+          message_count: c.message_count ?? 1,
+          tried_at: new Date().toISOString(),
+        })),
+        { onConflict: 'external_id' },
+      );
+    }
+
+    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, skippedGivenUp, written, dropped: dropped.length });
   } catch (err) {
     return json({ ok: false, error: String(err).slice(0, 500) }, 500);
   }
