@@ -67,10 +67,20 @@ Audited and fixed: focus now enters a sheet when it opens, sheets trap focus whi
 honoured via `prefers-reduced-motion`, and touch targets meet 44px. All four themes pass WCAG AA
 contrast for body text, dim text and the three rating colours used as text.
 
-Still untested: no screen reader has actually been driven through the app. Everything above was
-verified by measurement in a browser, which catches structure but not whether the experience makes
-sense read aloud 2014 the map in particular has no non-visual equivalent, and 201cwhich streets near me
-are marked unsafe201d is currently answerable only by looking.
+The accessibility tree was walked on 2026-09-07 — that is the structure a screen reader actually
+consumes, though not the same as hearing it. What it showed:
+
+- **"Near me" works as the non-visual equivalent of the map**, which was the gap flagged here.
+  It reads as "40 m west — Testgata", then "mostly reported unsafe · 0 safe, 4 unsafe", then the
+  note. Distance, direction, verdict and reason, in that order, with no map needed. It is much
+  more trustworthy since the bearing fix — it used to name the wrong direction outright.
+- All 11 sheets are `display:none` when closed, so no closed dialog leaks into the tree.
+- Every form control resolves to a real name; the theme picker exposes `aria-pressed` with
+  exactly one chip pressed, so the current theme is announced rather than only shown.
+
+Still genuinely untested: no actual screen reader has been run. The tree being well-formed does
+not prove the experience is coherent read aloud — ordering, verbosity and whether the map's own
+silence is confusing can only be judged by listening.
 
 The OpenStreetMap attribution link stays below 44px on purpose; it is a required credit rather than
 a control, and enlarging it would put a tap target over the map.

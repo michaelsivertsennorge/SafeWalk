@@ -1152,7 +1152,7 @@ document.getElementById('trimDoneBtn').addEventListener('click', () => {
   openSheet('reportSheet');
 });
 
-document.getElementById('pinRedragBtn').addEventListener('click', async () => {
+document.getElementById('pinRetraceBtn').addEventListener('click', async () => {
   const p = pins.find((x) => x.id === activePinId);
   if (!p || !p.paths) return;
   if (!requireAccount('to change a street you marked')) return;
@@ -1250,7 +1250,7 @@ function openPinSheet(id) {
         ? ''
         : 'You need to be within 1 km of this spot to add your own rating.';
   document.getElementById('pinDeleteBtn').hidden = !p.own;
-  document.getElementById('pinRedragBtn').hidden = !(p.own && p.paths);
+  document.getElementById('pinRetraceBtn').hidden = !(p.own && p.paths);
   openSheet('pinSheet');
 }
 
