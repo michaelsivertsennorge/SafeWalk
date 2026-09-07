@@ -1948,7 +1948,13 @@ function renderContacts() {
   const c = contacts[0];
   const row = document.createElement('div');
   row.className = 'contact-row';
-  row.innerHTML = `<span>${c.name} · ${c.phone}</span>`;
+  // textContent, not innerHTML: this names the person the SOS button dials, and a name containing
+  // <, & or " would otherwise be mangled or swallowed by the HTML parser. The data is self-authored
+  // and local-only, so this is about the name being displayed correctly far more than about
+  // scripting — but there is no reason to build it as HTML in the first place.
+  const who = document.createElement('span');
+  who.textContent = `${c.name} · ${c.phone}`;
+  row.appendChild(who);
   const rm = document.createElement('button');
   rm.textContent = 'Remove';
   rm.addEventListener('click', () => {
