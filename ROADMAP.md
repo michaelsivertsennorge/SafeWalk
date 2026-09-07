@@ -87,12 +87,17 @@ a control, and enlarging it would put a tap target over the map.
 
 ## Known weak points worth attacking
 
-- **The lit-streets layer cannot be verified from this development environment.** NVDB rejects any
-  request whose User-Agent does not look like a browser, answering 400 with "User-Agent er ingen
-  gyldig nettleser" (code 4017). Confirmed working with a normal browser UA: 200, 50 lit segments
-  for central Oslo. It should therefore work on a real phone, but that has not been checked — the
-  layer has only ever been observed empty here. Worth confirming on a device before selling the
-  feature.
+- **Lit streets now work — and had never worked before 2026-09-07.** This entry used to say the
+  layer could not be verified here but "should work on a real phone". That was wrong. NVDB rejects
+  any request whose User-Agent it dislikes (400, code 4017), and a browser cannot set User-Agent —
+  it is a forbidden header, so fetch() ignores it and the browser's own string is refused too.
+  Confirmed from a real Chrome against the live site. The layer was therefore impossible from the
+  client on every device since it shipped, while the map key claimed it existed.
+  It now goes through the `lit-streets` edge function, which can set the header. Verified: 17
+  segments in central Oslo, 36 in Tromsø, 34 polylines drawn in the app.
+  Worth knowing about NVDB: its message asks for "a User-Agent that identifies the system", but
+  the check really wants a browser-shaped string. `SafeWalk/1.0 (...)` is refused;
+  `Mozilla/5.0 (compatible; SafeWalk/1.0; +url)` is accepted.
 - **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
   `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
 
