@@ -15,10 +15,18 @@ const CACHE_NAME = 'safewalk-shell-v3';
 const SHELL_FILES = ['./', 'index.html', 'style.css', 'config.js', 'geo.js', 'app.js',
   'manifest.json', 'icon.svg', 'icon-180.png', 'icon-512.png', 'icon-maskable-512.png'];
 
+// cache.addAll() is all-or-nothing: one 404 rejects the whole thing, and with the rejection
+// swallowed that leaves offline support silently switched off — no error, no cached shell, and
+// nothing to notice until someone loses signal and the app will not open. Every file is currently
+// present, but a single typo in the list above would be enough. So each file is cached on its own
+// and the ones that fail are named, rather than taking the rest down with them.
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)).catch(() => {})
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const results = await Promise.allSettled(SHELL_FILES.map((f) => cache.add(f)));
+    const failed = SHELL_FILES.filter((_, i) => results[i].status === 'rejected');
+    if (failed.length) console.warn('SafeWalk: these shell files did not cache:', failed.join(', '));
+  })());
   self.skipWaiting();
 });
 
@@ -43,7 +51,17 @@ self.addEventListener('fetch', (event) => {
         return res;
       })
       // Only when the network genuinely fails — offline, or the server is unreachable — do we fall
-      // back to the last good copy.
-      .catch(() => caches.match(event.request))
+      // back to the last good copy. A cache miss here would otherwise resolve respondWith() with
+      // undefined, which the browser turns into a network error: for a navigation that means the
+      // browser's offline page instead of SafeWalk, even though the shell is sitting in the cache.
+      .catch(async () => {
+        const hit = await caches.match(event.request);
+        if (hit) return hit;
+        if (event.request.mode === 'navigate') {
+          const shell = (await caches.match('index.html')) || (await caches.match('./'));
+          if (shell) return shell;
+        }
+        return Response.error();
+      })
   );
 });

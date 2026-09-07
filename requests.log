@@ -17,3 +17,4 @@
 20:35:04  GET /geo.js?1788806104138 HTTP/1.1  [other]
 20:35:04  GET /app.js?1788806104138 HTTP/1.1  [other]
 20:35:04  GET /_tmp_test.js?1788806104138 HTTP/1.1  [other]
+20:38:34  GET /sw.js?1788806313769 HTTP/1.1  [other]
