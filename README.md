@@ -53,7 +53,6 @@ is left behind, so it is safe against production — run on 2026-09-07 with user
 confirmation counts identical before and after. All ten checks passed, including the volume floor
 (7 judgements at 100% contradicted must **not** silence anyone) and the cooldown being enforced by
 row-level security rather than only by the UI.
-is left behind, so it is safe against production.
 
 These are deliberately dependency-free. The client has no build step, and a suite that needed one
 would stop being run. They also encode bugs already found in real use — merge idempotency, snapping
