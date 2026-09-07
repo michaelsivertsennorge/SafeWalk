@@ -345,29 +345,38 @@ async function loadLighting() {
   const key = boundsKey(b);
   if (key === lightingLoadedFor) return;
   lightingLoadedFor = key;
+  // A map that has not been laid out yet reports zero size, and Leaflet then hands back a bounds
+  // with no span at all. Asking the server about a box of zero area is meaningless, and the reply
+  // would surface as "data unavailable" — blaming the API for what is really a map that has not
+  // been drawn yet.
+  if (b.getEast() === b.getWest() || b.getNorth() === b.getSouth()) {
+    lightingLoadedFor = null;   // try again once the map has a size
+    return;
+  }
   const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
   try {
-    const url = `https://nvdbapiles-v3.atlas.vegvesen.no/vegobjekter/86?kartutsnitt=${bbox}&srid=4326&inkluder=geometri&antall=1000`;
-    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } });
+    // Through our own backend, not NVDB directly. NVDB rejects any User-Agent that does not look
+    // like a browser, and a browser cannot set that header — User-Agent is forbidden to fetch(),
+    // so the browser sends its own and NVDB refuses that too. Confirmed from a real Chrome on the
+    // live site: 400, code 4017. This layer was therefore impossible from the client since the day
+    // it shipped, on every device. The edge function can set the header, so now it works.
+    const url = `${SUPABASE_URL}/functions/v1/lit-streets?bbox=${bbox}`;
+    const res = await fetchWithTimeout(url, {
+      headers: { Accept: 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    });
     if (!res) {
-      // Statens vegvesen refuses requests whose User-Agent does not look like a browser,
-      // answering 400 with "User-Agent er ingen gyldig nettleser". Real phones are fine; some
-      // embedded webviews are not, and the layer then just never appears. Say so in the console
-      // rather than leaving the map key promising lit streets that will never arrive.
       lightingLoadedFor = null;   // let a later attempt retry rather than caching the failure
       setLightingLegend('failed');
       if (!loggedLightingFailure) {
         loggedLightingFailure = true;
-        console.warn('SafeWalk: could not load lit-street data from NVDB. If this browser sends an ' +
-                     'unusual User-Agent, the API rejects it (code 4017).');
+        console.warn('SafeWalk: could not load lit-street data via the lit-streets function.');
       }
       return;
     }
     const data = await res.json();
     let drawn = 0;
     lightingLayer.clearLayers();
-    (data.objekter || []).forEach((obj) => {
-      const wkt = obj.geometri && obj.geometri.wkt;
+    (data.lines || []).forEach((wkt) => {
       if (!wkt || !wkt.startsWith('LINESTRING')) return;
       const pts = parseWktLineStringZ(wkt);
       if (!pts) return;   // unparseable or out of range: skip rather than draw it wrong
