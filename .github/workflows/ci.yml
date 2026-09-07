@@ -28,6 +28,21 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+      # The client files are classic browser scripts, so they are compiled the way a browser would
+      # rather than as modules. This exists because a line-based edit swallowed a closing brace on
+      # 2026-09-07 and would have shipped an app.js that did not parse at all — every geometry
+      # function undefined, on a safety map. The test suite could not have caught it: it requires
+      # geo.js directly and never loads app.js.
+      - name: Check every client script parses
+        run: |
+          for f in safewalk-app/geo.js safewalk-app/app.js safewalk-app/config.js safewalk-app/sw.js; do
+            node -e "
+              const fs = require('fs'), vm = require('vm');
+              try { new vm.Script(fs.readFileSync('$f', 'utf8'), { filename: '$f' }); }
+              catch (e) { console.error('SYNTAX ERROR in $f:', e.message); process.exit(1); }
+              console.log('$f parses');
+            "
+          done
       - name: Run the geo suite
         run: node tests/geo.test.js
 
