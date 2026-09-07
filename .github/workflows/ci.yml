@@ -24,10 +24,10 @@ jobs:
     name: Pure maths tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Run the geo suite
         run: node tests/geo.test.js
 
@@ -54,7 +54,7 @@ jobs:
       group: pages
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
       # Only the client ships. backend/ holds SQL migrations and the edge function; tests/ and
       # server.ps1 are development tooling. None of them belong on a public web root.
