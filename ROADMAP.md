@@ -57,9 +57,18 @@ Still worth doing here:
     evidence a person should weigh themselves, and silently moving a route because of one would hide
     the reason. Worth revisiting with real usage.
 - **Google sign-in** alongside email/password. Needs Google Cloud console setup.
-- **Reputation tuning.** The cooldown thresholds in `backend/005` (8 judgements, 70% contradicted,
-  30-day rolling window) are a first guess with no real data behind them. Revisit once there is
-  traffic. Wrongly silencing an honest reporter is much worse than letting a careless one continue.
+- **Reputation: the mechanism is verified, the numbers are still a guess.** `backend/tests/reputation.sql`
+  was run against the live database on 2026-09-07 and all ten checks passed, including the ones no
+  client-side suite can reach because they need two signed-in users and the ability to age records:
+  the volume floor (7 judgements at 100% contradicted does **not** silence anyone, so a small group
+  of dissenters cannot mute a reporter who is right), the 70% boundary exactly, and the full
+  lifecycle — clean allowed, in cooldown genuinely blocked by row-level security rather than only
+  by the UI, aged out after 31 days allowed again. `pin_confirmations` stayed unreadable even to
+  the person whose own judgement wrote the row. It rolls back: user, pin, vote and confirmation
+  counts were identical before and after.
+  What remains a guess is the thresholds themselves — 8 judgements, 70% contradicted, a 30-day
+  window (`backend/005`). Those need real traffic. Wrongly silencing an honest reporter is much
+  worse than letting a careless one continue, so err toward leniency when tuning.
 
 ## Accessibility
 

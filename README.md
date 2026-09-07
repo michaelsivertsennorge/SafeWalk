@@ -49,6 +49,10 @@ someone is allowed to warn other people about a street, and testing it needs two
 signed-in users plus the ability to age records — impossible from a browser or an anon key. Paste
 `backend/tests/reputation.sql` into the Supabase SQL editor and Run: it creates throwaway users,
 checks every threshold boundary and the full block-then-expire lifecycle, and rolls back. Nothing
+is left behind, so it is safe against production — run on 2026-09-07 with user, pin, vote and
+confirmation counts identical before and after. All ten checks passed, including the volume floor
+(7 judgements at 100% contradicted must **not** silence anyone) and the cooldown being enforced by
+row-level security rather than only by the UI.
 is left behind, so it is safe against production.
 
 These are deliberately dependency-free. The client has no build step, and a suite that needed one
