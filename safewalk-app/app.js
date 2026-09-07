@@ -515,10 +515,18 @@ function openPoliceSheet(group) {
 const POLICE_ALERT_MARGIN_M = 250; // "in or just outside the area the police described"
 const alertedPoliceIds = new Set();
 
+// The owner asked for a warning when there is an operation near where you are. It gated on
+// e.is_active — and that flag does not mean what it looks like it means. Measured on a live
+// Politiloggen feed: 3 of 50 messages had it set, all of them standing royal-visit press notices,
+// while every message of an actual grenade cordon had it false. So the warning almost never fired,
+// including standing directly on top of a live report in Tromsø, which is how this was found.
+//
+// Recency is already handled upstream: loadPoliceEvents only asks for rows still inside their TTL,
+// and the sync sets that from the incident's own timestamps. Anything near you that survived that
+// is worth telling you about; is_active only decides the wording.
 function checkPoliceProximity() {
   if (!userLocation || !policeEvents.length) return;
   const near = policeEvents.filter((e) => {
-    if (!e.is_active) return false;
     if (alertedPoliceIds.has(e.id)) return false;
     const d = haversine(userLocation.lat, userLocation.lng, e.lat, e.lng);
     return d <= (e.radius_m || 250) + POLICE_ALERT_MARGIN_M;
@@ -548,9 +556,16 @@ function showPoliceAlert(events) {
   if (!el) return;
   const first = events[0];
   const what = describeCategory(first.category);
+  const where = first.area ? `near ${first.area}` : 'near you';
+  // Only say "ongoing" when the police actually flagged it so. Everything else gets its age, which
+  // is the honest version — "reported 20 minutes ago" tells you what you need without pretending
+  // to know whether anyone is still there.
+  const when = first.occurred_at ? describeAge(Date.now() - new Date(first.occurred_at).getTime()) : '';
   el.querySelector('.police-alert-text').textContent = events.length === 1
-    ? `Police report an ongoing ${what} near ${first.area || 'you'}.`
-    : `${events.length} ongoing police operations reported near you.`;
+    ? (first.is_active
+        ? `Police report an ongoing ${what} ${where}.`
+        : `Police reported a ${what} ${where}${when ? `, ${when}` : ''}.`)
+    : `${events.length} police reports near you.`;
   el.hidden = false;
   buzz();
   // Tapping opens the detail, so the alert is a way in rather than just a scare.
