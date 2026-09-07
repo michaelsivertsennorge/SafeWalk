@@ -33,6 +33,11 @@ jobs:
       # 2026-09-07 and would have shipped an app.js that did not parse at all — every geometry
       # function undefined, on a safety map. The test suite could not have caught it: it requires
       # geo.js directly and never loads app.js.
+      # Verified by deliberately breaking it, not by watching it pass: on a throwaway branch the
+      # forEach brace was removed again and this step reported
+      #   "SYNTAX ERROR in safewalk-app/app.js: missing ) after argument list"
+      # exit 1, the geo suite never ran, and the deploy job was skipped. A guard nobody has watched
+      # fail is not yet a guard.
       - name: Check every client script parses
         run: |
           for f in safewalk-app/geo.js safewalk-app/app.js safewalk-app/config.js safewalk-app/sw.js; do
