@@ -1309,10 +1309,32 @@ async function geocode(query) {
   const viewbox = `${c.lng - d},${c.lat + d},${c.lng + d},${c.lat - d}`;
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox=${viewbox}&bounded=0&q=${encodeURIComponent(query)}`;
   const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } });
-  if (!res) return null;
+  // "We asked and there is no such place" and "we could not ask" are completely different things
+  // to the person typing. Collapsing both into null made the app answer a dead geocoder with
+  // "Couldn't find that address, try adding a city name" — sending someone off to correct an
+  // address that was already correct, on the screen they are using to get home.
+  if (!res) throw new Error('GEOCODER_UNREACHABLE');
   const data = await res.json();
   if (!data.length) return null;
   return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), label: data[0].display_name };
+}
+
+// Turns whichever of the two failures happened into something the person can act on. Both end in
+// "tap the pin", because that path needs no third-party service at all and always works.
+async function geocodeForRoute(text, fieldLabel) {
+  let point;
+  try {
+    point = await geocode(text);
+  } catch (err) {
+    if (err && err.message === 'GEOCODER_UNREACHABLE') {
+      throw new Error(`Address lookup isn't responding right now, so "${text}" could not be checked. Tap 📍 next to "${fieldLabel}" to pick the point on the map instead — that needs no lookup at all.`);
+    }
+    throw err;
+  }
+  if (!point) {
+    throw new Error(`Couldn't find "${text}". Try adding a city name, or tap 📍 next to "${fieldLabel}" to pick it on the map instead.`);
+  }
+  return point;
 }
 
 async function reverseGeocode(lat, lng) {
@@ -1565,8 +1587,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
         if (!fromPoint) throw new Error('Could not access your location. Tap 📍 next to "From" to pick a start point on the map instead.');
       } else {
         setLoadingStatus(status, 'Finding starting point…');
-        fromPoint = await geocode(fromText);
-        if (!fromPoint) throw new Error(`Couldn't find "${fromText}". Try adding a city name, or tap 📍 to pick it on the map instead.`);
+        fromPoint = await geocodeForRoute(fromText, "From");
       }
     }
 
@@ -1577,8 +1598,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       const toText = document.getElementById('routeTo').value.trim();
       if (!toText) throw new Error('Enter a destination, or tap 📍 next to "To" to pick one on the map.');
       setLoadingStatus(status, 'Finding destination…');
-      toPoint = await geocode(toText);
-      if (!toPoint) throw new Error(`Couldn't find "${toText}". Try adding a city name, or tap 📍 to pick it on the map instead.`);
+      toPoint = await geocodeForRoute(toText, "To");
     }
 
     const modeLabel = routeMode === 'bicycle' ? 'biking' : 'walking';
