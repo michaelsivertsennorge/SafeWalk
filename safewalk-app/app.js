@@ -973,11 +973,16 @@ mapContainer.addEventListener('pointermove', onMapPointerMove);
 mapContainer.addEventListener('pointerup', () => endPress(false));
 mapContainer.addEventListener('pointercancel', () => endPress(true));
 
+// Set by the error branch below so a caller can say *why* locate() came back empty, not just that
+// it did. Only meaningful immediately after a single awaited call, same rule as lastFetchFailure.
+let lastLocateError = null;
+
 function locate(recenter = true) {
   return new Promise((resolve) => {
-    if (!navigator.geolocation) return resolve(null);
+    if (!navigator.geolocation) { lastLocateError = 'unsupported'; return resolve(null); }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        lastLocateError = null;
         userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         checkPoliceProximity();
         checkIncidentProximity();
@@ -987,7 +992,10 @@ function locate(recenter = true) {
         prefetchAroundUser(userLocation.lat, userLocation.lng);
         resolve(userLocation);
       },
-      () => {
+      (err) => {
+        // code 1 is PERMISSION_DENIED — the one case where retrying won't help without the person
+        // acting first. Everything else (POSITION_UNAVAILABLE, TIMEOUT) is worth trying again.
+        lastLocateError = err && err.code === 1 ? 'denied' : 'unavailable';
         renderPins();
         resolve(null);
       },
@@ -1006,7 +1014,20 @@ document.getElementById('locateBtn').addEventListener('click', () => {
   }
   const btn = document.getElementById('locateBtn');
   btn.classList.add('loading');
-  locate(true).finally(() => btn.classList.remove('loading'));
+  locate(true)
+    .then((loc) => {
+      // Before this, a failed fix just stopped the spinner — a tap that looked like it did
+      // nothing, indistinguishable from the tap not registering at all.
+      if (loc) return;
+      if (lastLocateError === 'denied') {
+        showToast("Location is off for SafeWalk. Allow it in your browser's site settings to use this.");
+      } else if (lastLocateError === 'unsupported') {
+        showToast("This browser can't provide your location.");
+      } else {
+        showToast("Couldn't find your location right now. Try again in a moment.");
+      }
+    })
+    .finally(() => btn.classList.remove('loading'));
 });
 
 // ---------- Sheets ----------
