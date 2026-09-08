@@ -322,8 +322,24 @@ hour-resolution, and the proximity hint flips correctly between near and far.
 Still open:
 - No moderation path beyond community disputes. A defamatory report can be voted down but not
   reported to anyone, and there is no appeal for a walker whose report is wrongly buried.
-- The reputation cooldown gates reporting (RLS), but incidents do not yet feed back into standing,
-  so a serial false reporter is not slowed by their own record.
+- Reporter standing now counts incidents too (migration 020). A disputed report is a judgement of
+  its author, exactly as a contradicted pin is, and the same thresholds apply: 8 judgements, 70%
+  contradicted, 30 days. Being repeatedly wrong about incidents also pauses your pins, and the
+  reverse — both are claims about whether somewhere is safe.
+  The decision worth remembering: incident_confirmations has NO foreign key to incidents. Reports
+  are deleted after seven days, and a cascade would wipe a serial false reporter clean every week —
+  precisely the person the record exists to slow. The judgement outlives the report and is purged
+  on its own after 90 days. Verified: nine disputed reports produce nine judgements, all nine
+  survive deleting every report, and the author is then blocked from adding pins AND incidents.
+- Two categories were removed after the owner reviewed them (021, 022). "Fighting or aggression"
+  was redundant with assault and unsafe-place, and worse, was the closest thing to "scary" that
+  survived 019 own filter: "an aggressive group" is people-shaped and invites exactly the report
+  this app must not collect. And the free-text note is gone entirely — it was the one field that
+  could carry a description of a person, and no constraint can stop that. Keeping it unpublished
+  for future moderation was considered and rejected: collecting personal data about third parties
+  for a purpose that does not exist yet is what data minimisation forbids, and a moderator needs
+  the category, place, time and disputes, all of which are recorded. Context about a PLACE belongs
+  on a rating, which still has notes.
 - Warning someone walking towards a report was added the same day: within 150m, only reports from
   the last 24 hours, never your own, and once per report per session. A six-day-old incident is map
   context rather than something worth a buzz. The banner is shared with the police alert but takes

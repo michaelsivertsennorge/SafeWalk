@@ -4140,7 +4140,6 @@ const INCIDENT_KINDS = {
   assault:     { label: 'Assault', glyph: '⚠' },
   robbery:     { label: 'Robbery or theft', glyph: '⚠' },
   harassment:  { label: 'Harassment', glyph: '⚠' },
-  disturbance: { label: 'Fighting or aggression', glyph: '⚠' },
   hazard:      { label: 'Unsafe place', glyph: '⚠' },
 };
 // Voting counts double from someone who was near it. A weight, never a gate — see ROADMAP.md.
@@ -4238,7 +4237,6 @@ document.getElementById('openIncidentBtn').addEventListener('click', () => {
   if (!pendingPoint) { showToast('Tap the map where it happened first.'); return; }
   pendingIncidentKind = null;
   document.querySelectorAll('#incidentKinds .incident-kind').forEach((b) => b.classList.remove('selected'));
-  document.getElementById('incidentNote').value = '';
   document.getElementById('incidentStatus').textContent = '';
   document.getElementById('submitIncident').disabled = true;
   document.getElementById('incidentCoords').textContent =
@@ -4261,14 +4259,13 @@ document.getElementById('submitIncident').addEventListener('click', async () => 
   if (!requireAccount('to report something that happened')) return;
   if (!sb) { statusEl.textContent = 'You need a connection to report an incident.'; return; }
 
-  const note = document.getElementById('incidentNote').value.trim();
   setLoadingStatus(statusEl, 'Reporting…');
+  // What, where and when — there is no free-text field, deliberately. See migration 022.
   const { error } = await settled(sb.from('incidents').insert({
     user_id: currentUser.id,
     category: pendingIncidentKind,
     lat: pendingPoint.lat,
     lng: pendingPoint.lng,
-    note: note || null,
   }), 'report that');
 
   if (error) {
@@ -4299,9 +4296,6 @@ function openIncidentView(id) {
     INCIDENT_KINDS[inc.category]?.label || 'Reported incident';
   document.getElementById('incidentViewWhen').textContent =
     'Reported about ' + describeAge(Date.now() - new Date(inc.occurred_at).getTime()) + '.';
-  const noteEl = document.getElementById('incidentViewNote');
-  noteEl.textContent = inc.note || '';
-  noteEl.hidden = !inc.note;
 
   const up = Number(inc.confirmed) || 0;
   const down = Number(inc.disputed) || 0;

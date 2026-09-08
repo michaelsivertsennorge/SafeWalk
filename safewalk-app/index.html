@@ -136,15 +136,16 @@
       <button class="incident-kind" data-incident="assault">Assault<span>Someone was attacked</span></button>
       <button class="incident-kind" data-incident="robbery">Robbery or theft<span>Something was taken</span></button>
       <button class="incident-kind" data-incident="harassment">Harassment<span>Followed, threatened, shouted at</span></button>
-      <button class="incident-kind" data-incident="disturbance">Fighting or aggression<span>A fight, or an aggressive group</span></button>
       <button class="incident-kind" data-incident="hazard">Unsafe place<span>No lighting, blocked path, broken glass</span></button>
     </div>
-    <textarea id="incidentNote" maxlength="140" aria-label="Optional note about the place"
-      placeholder="Optional: what about the place matters? (140 chars)"></textarea>
-    <p class="sheet-sub sheet-fineprint">Describe <strong>what happened and where</strong> — never
-      what anyone looked like. Reports naming or describing people are the way apps like this end up
-      targeting the wrong person, and they will be removed. This is shown to everyone for seven days,
-      never your name, and people who were there can dispute it.</p>
+    <!-- There is deliberately no text box. It was the one field that could carry a description of a
+         person, and no rule can stop that: "tall man in a grey hoodie" fits in 140 characters and
+         breaks every other safeguard here. A report says what, where and when — that is all it
+         should say. Context about a PLACE belongs on a rating, which has notes. -->
+    <p class="sheet-sub sheet-fineprint">A report records <strong>what happened, where and when</strong>
+      — nothing else, and never your name. It stays on the map for seven days, and people who were
+      there can confirm or dispute it. If you need to say more about the place itself, rate it
+      instead: ratings have a note, and they are a lighter thing to say.</p>
     <p class="sheet-sub" id="incidentStatus" aria-live="polite"></p>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Cancel</button>
@@ -157,7 +158,6 @@
     <div class="sheet-handle"></div>
     <h2 id="incidentViewTitle">Reported incident</h2>
     <p class="sheet-sub" id="incidentViewWhen"></p>
-    <p class="incident-view-note" id="incidentViewNote"></p>
     <p class="sheet-sub" id="incidentViewTally"></p>
     <p class="sheet-label">Were you there?</p>
     <div class="sheet-actions incident-vote-row">
