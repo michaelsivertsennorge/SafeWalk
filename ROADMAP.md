@@ -297,6 +297,125 @@ a control, and enlarging it would put a tap target over the map.
 - **`renderPins` is NOT a bottleneck**, contrary to an earlier note here. Measured: 1.6ms at 50
   pins, 8.7ms at 1000, 14.3ms at 2000 — under one frame, scaling linearly. Left alone deliberately.
 
+## Ideas from the owner — proposed 2026-09-08, none started
+
+Written down after the owner looked at the competition. Kept together because three of them
+interact, and two of them are decisions about what SafeWalk *is* rather than features to schedule.
+
+### What the competition actually does — safetymap.io, read 2026-09-08
+Worth recording, because it changes the shape of two ideas below. Safetymap (by Wicupp) is a
+**native iOS/Android app**, 15k downloads, 30+ countries, 4.2★, free, no account needed to read the
+map. Community area ratings, incident alerts (theft / harassment / aggression), safe-route guidance
+— all of which SafeWalk has or is planning. Two things it has that we have not thought about:
+
+- **A refuge network**: the nearest *open* place you can walk into right now — a pharmacy, a shop.
+  Arguably more useful in the moment than any amount of colour on a map, because it is the only
+  feature in the category that tells a frightened person where to *go* rather than what to avoid.
+- **A business model**: "Safetymap Pro" sells private moderated alert channels to shopping centres,
+  campuses, industrial sites and local authorities. Free for citizens, paid for by organisations.
+  If "sellable" is the goal, that is where the money in this category demonstrably is — not in
+  charging the person walking home.
+
+The strategic read: the idea is not novel and is already executed globally at modest scale. What
+SafeWalk has that a global app structurally cannot is **local depth** — the Politiloggen
+integration is official Norwegian police data, per-district, and nobody operating in 30 countries
+will build that for Norway. Depth in one country is the defensible position, not breadth.
+
+### 1. Green/red fog instead of hard circles
+Not only prettier — more honest. A crisp circle claims a boundary the data does not have: "safe up
+to this line, unsafe past it" is false, and drawing it that way states a precision we cannot
+support. A soft field is a truthful rendering of uncertainty.
+
+**The constraint that must not be lost:** rule 1 of this file. Rating colours carry a redundant
+line style (solid / dashed / dotted) so the map survives colourblindness, and a fog has no line
+style to carry. Any implementation needs a second channel — texture, hatching, or keeping crisp
+dashed outlines for street pins and using fog only for area pins. A fog that encodes safety in hue
+alone is a regression however good it looks.
+
+### 2. Rating unlocks features — e.g. incident notifications
+**Recommend against this specific form, and the reason is not squeamishness.** Gating *nearby
+incident alerts* behind contribution means the person who has not rated anything does not get told
+that something happened on the street they are walking down. That is withholding a safety warning
+from someone to make them participate, and it is the one currency this app must never trade in.
+
+It also fights the reputation system already built (migration 005), which exists to reward accuracy
+and can silence a reporter who is repeatedly contradicted. An incentive that rewards *volume* pulls
+directly against it.
+
+Incentives that do not have this problem: showing someone how many walkers passed the places they
+marked; earned standing that visibly weights their reports; unlocking non-safety extras (themes,
+personal stats, history export). Reward contribution with recognition, never with safety.
+
+### 3. An incident button — "something bad happened here"
+The strongest idea of the five, and the most dangerous to build carelessly. It is different in kind
+from a rating: a rating is an opinion about a place, an incident report is an **accusation that a
+crime occurred at a time and place**, published to strangers.
+
+Two failure modes are well documented in this exact product category (Citizen, Nextdoor, Ring
+Neighbors) and must be designed against from the first version, not retrofitted:
+
+- **It becomes a way to report people rather than places.** A "scary" category invites exactly
+  that, and in every app that has shipped it the reports skew hard against minorities and homeless
+  people. Mitigations that work: categories that name *what happened* (assault, theft, harassment,
+  followed) and never *who was there*; no photos of people; no free-text description of a person;
+  and a note in the UI saying the report is about a place.
+- **It becomes defamation.** "Violence here, 23:40" at a precise address can identify a real
+  incident and a real person. Needs the existing cooldown/reputation gate applied at least as
+  strictly as pins, an expiry (incidents are news, not permanent facts about a street), and a
+  visible way to contest one.
+
+Also: the police layer already draws official incidents. Community incidents must look
+*different* from Politiloggen ones on the map, or the app launders a stranger's claim into
+something that reads as a police report.
+
+### 4. Legal standing and IP
+Not legal advice — this is orientation for a conversation with a lawyer, not a substitute for one.
+
+**On protecting the idea:** ideas are not protectable; implementations are. Copyright already
+exists automatically in the code. Patents are unlikely to be worth it here — expensive, slow, and
+the prior art is thick (Safetymap alone predates us). "Making sure no one can steal the idea" is
+the wrong goal because the idea is already public and already built by others; what is defensible
+is execution, brand, and the accumulated local data.
+
+**The name is worth checking first.** "SafeWalk" is close to generic and is already the common name
+for university walking-escort services in several countries. A trademark search before any money
+goes into branding is cheap and may save renaming later.
+
+**The bigger legal exposure is not IP — it is data protection.** This app records where identified
+users walk, in the EEA. Under GDPR that is personal data, and a route home is about as sensitive as
+location data gets. What that means in practice: a real privacy policy, a stated lawful basis,
+working data subject rights (access, deletion), a data processing agreement with Supabase, a
+retention policy, and a defensible answer to "what happens if this database leaks". Norway's
+Datatilsynet publishes guidance in plain Norwegian. Publishing user-generated crime accusations
+(idea 3) adds defamation exposure on top.
+
+Order of priority, if there is only budget for one conversation: data protection first, trademark
+second, patents not at all.
+
+### 5. Journey tracking, timers, and telling a contact you got home
+Standard in this category and genuinely useful. Two hard truths before designing it:
+
+- **A web app cannot do this reliably on iOS.** Background geolocation stops when a PWA is
+  backgrounded or the screen locks, so "raise the alarm if they stop moving for ten minutes" cannot
+  be built on what SafeWalk is today. Web Push works on iOS 16.4+ but only for a PWA installed to
+  the home screen. This idea, more than any other on the list, is what would force a native app —
+  and that is a much larger decision than a feature.
+- **Requiring the contact to install the app and make an account will kill it.** The person you
+  most want to notify is a parent who will not do that. A tokenised link, sent however the user
+  likes, that opens a plain web page showing "walking, last seen 21:40, expected home 22:10", costs
+  the recipient nothing. SMS would be better still but needs a paid provider.
+
+False alarms are the whole design problem: stopping to talk to someone must not call anyone. Any
+alarm needs a generous countdown the walker can cancel, and the cancel must be reachable in one
+tap without unlocking anything.
+
+### The decision hiding in this list
+Ideas 2 and 5, and incident *notifications* in idea 3, all want push notifications and background
+location. Both are things a web app does badly or not at all on iOS. Safetymap is native for
+exactly this reason. So the real question underneath these five ideas is whether SafeWalk stays a
+web app — instantly openable, no install, no app store — or becomes native and gains the ability to
+warn people when it is not open. That is worth deciding deliberately before building any of them.
+
 ## Rules that must not be broken
 
 1. **Never publish authorship.** `pins_with_scores` exposes `is_mine`, never `user_id`; `votes` and
