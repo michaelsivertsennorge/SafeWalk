@@ -384,12 +384,27 @@
     <p class="sheet-sub" id="authIntro">Your ratings sync across your devices, and one account means one vote per place.</p>
     <input id="authEmail" type="email" autocomplete="email" aria-label="Email" placeholder="Email" />
     <input id="authPassword" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password (min. 6 characters)" />
+    <button class="btn btn-ghost btn-block" id="forgotPasswordBtn">Forgot password?</button>
     <p class="sheet-sub" id="authStatus" aria-live="polite"></p>
     <button class="btn btn-primary btn-block" id="authSubmitBtn">Sign in</button>
     <button class="btn btn-ghost btn-block" id="authToggleModeBtn">New here? Create an account</button>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>
+  </section>
+
+  <!-- Reached automatically after following the emailed reset link, never opened by hand. Supabase
+       has already verified the email by then (that is what the link proves), so no current password
+       is asked for here — unlike Profile's change-password form, which exists for the opposite case:
+       someone who still knows their password and wants a different one. -->
+  <section class="sheet" id="recoverPasswordSheet" role="dialog" aria-modal="true" aria-labelledby="recoverPasswordTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="recoverPasswordTitle">Choose a new password</h2>
+    <p class="sheet-sub">You followed a reset link from your email. Set a new password to finish getting back in.</p>
+    <input id="recoverNewPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
+    <input id="recoverConfirmPassword" type="password" autocomplete="new-password" aria-label="Repeat new password" placeholder="Repeat new password" />
+    <p class="sheet-sub" id="recoverPasswordStatus" aria-live="polite"></p>
+    <button class="btn btn-primary btn-block" id="recoverPasswordSaveBtn">Save new password</button>
   </section>
 
   <!-- First-run walkthrough -->

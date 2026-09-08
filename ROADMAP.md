@@ -58,9 +58,21 @@ password, so the two network calls (`signInWithPassword` to re-authenticate, the
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
 Still open here:
-- There is no "forgot password" flow. Someone who cannot remember their password has no way back
-  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
-  is the missing half.
+- **Forgot password — added 2026-09-08, not yet exercised end to end.** The change-password form in
+  Profile still deliberately requires the old password, so it was never going to be the answer for
+  someone who cannot remember it. The auth sheet now has a "Forgot password?" button (hidden while
+  creating an account, where it makes no sense) that calls `resetPasswordForEmail`; the reply is the
+  same whether or not the address has an account, so the screen cannot be used to check who has
+  signed up. Following the emailed link is what supabase-js turns into a `PASSWORD_RECOVERY` auth
+  event, which now opens a dedicated "choose a new password" sheet and calls `updateUser` — no old
+  password asked, because the link itself is the proof of the same kind `signInWithPassword`
+  normally provides.
+  **Two things this run could not check and the next one, or the owner, must:** first, Supabase only
+  honours a `redirectTo` URL that is on the project's Redirect URLs allow-list, and that setting
+  lives in the Supabase dashboard — unreachable without credentials from here — so until someone adds
+  both the local dev URL and the GitHub Pages URL there, the emailed link will fail rather than
+  reopen the app. Second, none of this has been run against a real inbox: the request shape, the
+  event name, and the two new sheets were read against the Supabase JS docs, not watched working.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 

@@ -2616,6 +2616,51 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
   buzz();
 });
 
+// ---------- Forgotten password ----------
+// The change-password form above deliberately requires the old password, which leaves nobody who
+// has actually forgotten it any way back in. This is the missing half: an emailed link stands in
+// for the old password, proving the person controls the account by controlling its inbox instead.
+document.getElementById('forgotPasswordBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('authStatus');
+  if (!sb) { statusEl.textContent = 'Cloud sync is unavailable — check your connection.'; return; }
+  const email = document.getElementById('authEmail').value.trim();
+  if (!email) { statusEl.textContent = 'Enter your email above, then tap "Forgot password?" again.'; return; }
+
+  setLoadingStatus(statusEl, 'Sending a reset link…');
+  // Sent back to wherever this page is actually hosted (localhost while developing, GitHub Pages
+  // once deployed) rather than a hardcoded URL, so the link works in both places. Supabase requires
+  // this exact URL to be allow-listed in its Redirect URLs setting first, or the email link 400s.
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  // Supabase does not say whether the address has an account either way, and neither does this
+  // message — an attacker fishing for which emails are registered learns nothing from the reply.
+  statusEl.textContent = error
+    ? (error.message || 'Could not send a reset link right now. Try again in a moment.')
+    : `If an account exists for ${email}, a reset link is on its way — open it on this device to choose a new password.`;
+});
+
+// Supabase parses the emailed link's token from the URL on load and turns it into a real session,
+// firing this event once that happens — session, so `currentUser` gets set and the map fills in as
+// normal, but a password nobody chose is not a login. This is what actually asks for a new one.
+document.getElementById('recoverPasswordSaveBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('recoverPasswordStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish resetting your password.'; return; }
+
+  const next = document.getElementById('recoverNewPassword').value;
+  const again = document.getElementById('recoverConfirmPassword').value;
+  if (!next) { statusEl.textContent = 'Enter a new password.'; return; }
+  if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
+  if (next !== again) { statusEl.textContent = 'The two passwords do not match.'; return; }
+
+  setLoadingStatus(statusEl, 'Saving your new password…');
+  const { error } = await sb.auth.updateUser({ password: next });
+  if (error) { statusEl.textContent = error.message; return; }
+
+  closeSheets();
+  showToast('Password changed — you are signed in.');
+  buzz();
+});
+
 // ---------- Reporter standing ----------
 // Only ever about yourself. There is no way to look up anyone else's accuracy, by design: a public
 // score would invite harassment and would discourage exactly the unpopular warnings this app needs.
@@ -2659,6 +2704,8 @@ function setAuthMode(mode) {
     ? 'New here? Create an account'
     : 'Already have an account? Sign in';
   document.getElementById('authPassword').autocomplete = signin ? 'current-password' : 'new-password';
+  // Meaningless while creating an account — there is no existing password to have forgotten yet.
+  document.getElementById('forgotPasswordBtn').hidden = !signin;
   // When a write action sent us here, lead with what the sign-in is actually for.
   document.getElementById('authStatus').textContent = authReason ? `Sign in ${authReason}.` : '';
 }
@@ -2983,13 +3030,24 @@ async function persistVote(pinId, rating, note) {
 
 if (sb) {
   // Fires on load with the restored session too, so this is also how the map gets its first fill.
-  sb.auth.onAuthStateChange(async (_event, session) => {
+  sb.auth.onAuthStateChange(async (event, session) => {
     currentUser = session ? session.user : null;
     renderAccountState();
     // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
     // though the location has not moved.
     await refreshPinsFromCloud({ force: true });
     refreshStanding();
+    // Fires once, on load, only when the page was opened from the link in a reset-password email —
+    // Supabase has already turned that link's token into a real session by the time this runs. Left
+    // unhandled, that session would just look like a normal sign-in on whatever screen the page
+    // happened to open on, and the person would still have no way to set the password they came
+    // here to change.
+    if (event === 'PASSWORD_RECOVERY') {
+      document.getElementById('recoverNewPassword').value = '';
+      document.getElementById('recoverConfirmPassword').value = '';
+      document.getElementById('recoverPasswordStatus').textContent = '';
+      openSheet('recoverPasswordSheet');
+    }
   });
 }
 
