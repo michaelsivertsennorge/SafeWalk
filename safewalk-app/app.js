@@ -2992,8 +2992,11 @@ document.getElementById('authForgotBtn').addEventListener('click', guarded('auth
     statusEl.textContent = 'If there is an account for that address, a reset link is on its way. Check your spam folder too.';
     return;
   }
+  // Supabase's own email-sending limit is per-hour, not per-minute — "wait a minute" used to be
+  // said here regardless, which sends someone straight back into the same limit a minute later,
+  // maybe for the rest of the hour, each time believing this attempt should work.
   statusEl.textContent = error
-    ? 'Too many attempts just now. Wait a minute and try again.'
+    ? "Too many attempts just now. Email sending is limited to a few per hour, so this may take a while to clear — wait before trying again rather than retrying right away."
     : 'If there is an account for that address, a reset link is on its way. Check your spam folder too. Open it on this device.';
 }));
 
