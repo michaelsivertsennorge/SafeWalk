@@ -777,6 +777,81 @@ check('pathMidpoint: survives degenerate paths', () => {
   eq(geo.pathMidpoint([]), null);
   eq(geo.pathMidpoint(null), null);
 });
+
+// ---------------------------------------------------------------------------
+// Opening hours. These decide whether a frightened person is sent to a door, so the case that
+// matters most is not open or closed — it is "we cannot tell", which must never come back as open.
+
+// Helper: a Date for a given weekday and time. 2026-09-07 is a Monday.
+const at = (day, hhmm) => {
+  const monday = new Date('2026-09-07T00:00:00');
+  const d = new Date(monday);
+  d.setDate(monday.getDate() + ({ Mo: 0, Tu: 1, We: 2, Th: 3, Fr: 4, Sa: 5, Su: 6 })[day]);
+  const [h, m] = hhmm.split(':').map(Number);
+  d.setHours(h, m, 0, 0);
+  return d;
+};
+
+check('isOpenNow: 24/7 is always open', () => {
+  eq(geo.isOpenNow('24/7', at('Mo', '03:00')), true);
+  eq(geo.isOpenNow('24/7', at('Su', '23:59')), true);
+});
+
+check('isOpenNow: a weekday range', () => {
+  const spec = 'Mo-Fr 08:00-20:00';
+  eq(geo.isOpenNow(spec, at('We', '12:00')), true);
+  eq(geo.isOpenNow(spec, at('We', '07:59')), false);
+  eq(geo.isOpenNow(spec, at('We', '20:00')), false, 'closing time is not still open');
+  eq(geo.isOpenNow(spec, at('Sa', '12:00')), false, 'a day the rules never mention is closed');
+});
+
+check('isOpenNow: several rules, and off wins for its own day', () => {
+  const spec = 'Mo-Fr 08:00-20:00; Sa 10:00-16:00; Su off';
+  eq(geo.isOpenNow(spec, at('Sa', '11:00')), true);
+  eq(geo.isOpenNow(spec, at('Sa', '17:00')), false);
+  eq(geo.isOpenNow(spec, at('Su', '11:00')), false);
+});
+
+check('isOpenNow: a lunch break inside one day', () => {
+  const spec = 'Mo-Fr 09:00-12:00,13:00-17:00';
+  eq(geo.isOpenNow(spec, at('Tu', '11:00')), true);
+  eq(geo.isOpenNow(spec, at('Tu', '12:30')), false, 'shut for lunch');
+  eq(geo.isOpenNow(spec, at('Tu', '16:00')), true);
+});
+
+check('isOpenNow: a bar open past midnight', () => {
+  // The case that matters at 2am, and the one a naive start<end comparison gets exactly backwards.
+  const spec = 'Fr-Sa 20:00-03:00';
+  eq(geo.isOpenNow(spec, at('Fr', '23:00')), true);
+  eq(geo.isOpenNow(spec, at('Sa', '02:00')), true);
+  eq(geo.isOpenNow(spec, at('Sa', '04:00')), false);
+});
+
+check('isOpenNow: day lists and wrapping ranges', () => {
+  eq(geo.isOpenNow('Mo,We,Fr 09:00-17:00', at('We', '10:00')), true);
+  eq(geo.isOpenNow('Mo,We,Fr 09:00-17:00', at('Tu', '10:00')), false);
+  eq(geo.isOpenNow('Fr-Mo 09:00-17:00', at('Su', '10:00')), true, 'Fr-Mo wraps past Sunday');
+  eq(geo.isOpenNow('Fr-Mo 09:00-17:00', at('We', '10:00')), false);
+});
+
+check('isOpenNow: anything it cannot read is unknown, never open', () => {
+  // Each of these is real OSM syntax that this deliberately does not interpret. Every one must come
+  // back null — a confident half-reading here sends somebody to a locked door.
+  ['Mo-Fr 08:00-20:00; PH off',
+   'sunrise-sunset',
+   'Mo-Fr 08:00-20:00; Dec 24 off',
+   'week 1-52 Mo-Fr 08:00-17:00',
+   'Mo-Fr 08:00-20:00 open "ring the bell"',
+   'nonsense',
+   ''].forEach((spec) => {
+    eq(geo.isOpenNow(spec, at('Mo', '10:00')), null, `"${spec}" must be unknown`);
+  });
+});
+
+check('isOpenNow: a missing tag is unknown, not closed', () => {
+  eq(geo.isOpenNow(undefined, at('Mo', '10:00')), null);
+  eq(geo.isOpenNow(null, at('Mo', '10:00')), null);
+});
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {

@@ -614,6 +614,85 @@ function pathMidpoint(path) {
   const last = path[path.length - 1];
   return { lat: last[0], lng: last[1] };
 }
+
+// ---------- Opening hours ----------
+// OpenStreetMap's `opening_hours` is a small language, not a time range: "Mo-Fr 08:00-20:00; Sa
+// 10:00-16:00; Su off" is ordinary, and so are things this deliberately refuses to interpret.
+//
+// It returns true, false, or **null for "cannot tell"**, and the null is the important one. This
+// decides whether a frightened person is sent to a door. A place wrongly shown as open costs them
+// the two minutes it takes to walk there and find it locked, at the moment they least have two
+// minutes — so anything not understood with certainty says so instead of guessing.
+//
+// Handled: 24/7; day ranges and lists (Mo-Fr, Sa,Su); several time spans in one rule; spans that
+// cross midnight (22:00-04:00); explicit off/closed; later rules overriding earlier ones, which is
+// how the format works. Everything else — public holidays, week numbers, months, sunset, "open" —
+// makes the whole answer null rather than a confident half-reading.
+const OH_DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function ohDayIndexes(daySpec) {
+  const out = new Set();
+  for (const part of daySpec.split(',')) {
+    const range = part.trim().match(/^(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?$/);
+    if (!range) return null;
+    const from = OH_DAYS.indexOf(range[1]);
+    const to = range[2] ? OH_DAYS.indexOf(range[2]) : from;
+    // Wraps across Sunday: Fr-Mo means Fr, Sa, Su, Mo.
+    for (let i = from; ; i = (i + 1) % 7) {
+      out.add(i);
+      if (i === to) break;
+    }
+  }
+  return out;
+}
+
+function isOpenNow(spec, now = new Date()) {
+  if (typeof spec !== 'string' || !spec.trim()) return null;
+  const text = spec.trim();
+  if (/^24\/7$/.test(text)) return true;
+
+  const today = now.getDay();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  let verdict = null;      // what the last matching rule said
+  let sawAnyRule = false;
+
+  for (const raw of text.split(';')) {
+    const rule = raw.trim();
+    if (!rule) continue;
+    sawAnyRule = true;
+
+    const parsed = rule.match(
+      /^((?:(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?)(?:,(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?)*)?\s*(off|closed|(?:\d{1,2}:\d{2}-\d{1,2}:\d{2})(?:\s*,\s*\d{1,2}:\d{2}-\d{1,2}:\d{2})*)$/i,
+    );
+    // One thing we cannot read makes the whole answer unknown. A rule we skipped could be the
+    // very one that closes this place tonight.
+    if (!parsed) return null;
+
+    const days = parsed[1] ? ohDayIndexes(parsed[1]) : null;
+    if (parsed[1] && !days) return null;
+    if (days && !days.has(today)) continue;
+
+    const body = parsed[2].toLowerCase();
+    if (body === 'off' || body === 'closed') { verdict = false; continue; }
+
+    let openNow = false;
+    for (const span of body.split(',')) {
+      const t = span.trim().match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+      if (!t) return null;
+      const start = Number(t[1]) * 60 + Number(t[2]);
+      const end = Number(t[3]) * 60 + Number(t[4]);
+      // 22:00-04:00 runs past midnight, so "now" counts if it is after the start OR before the end.
+      if (end <= start ? (minutes >= start || minutes < end) : (minutes >= start && minutes < end)) {
+        openNow = true;
+      }
+    }
+    verdict = openNow;
+  }
+
+  if (!sawAnyRule) return null;
+  // Every rule parsed and none of them mentioned today, which in this format means closed.
+  return verdict === null ? false : verdict;
+}
 // Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
@@ -623,6 +702,6 @@ if (typeof module !== 'undefined' && module.exports) {
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
     bearingDegrees, compassPoint, describeDistance, describeAge, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
-    routeProgress, trailingRouteSegment, pathMidpoint,
+    routeProgress, trailingRouteSegment, pathMidpoint, isOpenNow,
   };
 }

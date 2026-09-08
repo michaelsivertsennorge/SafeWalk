@@ -243,6 +243,42 @@ Still open here:
   each one lands. Capped at 200 and never sent anywhere except as the marks themselves, but it is a
   local trace, which is worth remembering if the device itself is the threat.
 
+### Somewhere to go (refuges) — **done, 2026-09-08**
+Borrowed from the competition, and possibly the best idea in the category. Every other layer here
+tells you what to avoid; this is the only one that tells you where to **go** — the nearest door you
+can walk through, open now, with people behind it.
+
+It needed no new data source and no partnerships. OpenStreetMap already knows, and the app already
+talks to Overpass. Lives under "Near me", loaded after the sheet opens so a slow Overpass never
+holds it shut.
+
+**`isOpenNow()` is in geo.js with eight tests, and returns three values, not two.** `opening_hours`
+is a small language — `Mo-Fr 08:00-20:00; Sa 10:00-16:00; Su off` is ordinary, and so is syntax this
+deliberately refuses to read. It handles 24/7, day ranges and lists, ranges that wrap past Sunday,
+several spans per day, spans crossing midnight, `off`, and later rules overriding earlier ones.
+Everything else — public holidays, week numbers, `sunrise-sunset` — returns **null, meaning "cannot
+tell"**, never a guess. That null is the whole point: this decides whether a frightened person walks
+to a door, and a place wrongly shown as open costs them two minutes at the moment they least have
+two minutes. Places known to be shut are dropped; unknown ones are kept and labelled, because a
+hotel lobby whose hours nobody recorded is still worth knowing about at 1am.
+
+**Ranking was wrong on the first run, and only real data showed it.** Sorting by kind first returned
+five pharmacies for central Oslo — every one shut at 1am, four of them present only because their
+hours are unrecorded. Confirmed-open now sorts ahead of kind, and no more than two of any one kind
+appear. Re-run at 02:00 on a Saturday from Jernbanetorget it returns the 24-hour pharmacy, two
+7-Elevens and two Jokers, all confirmed open. That is the feature working.
+
+**Both Overpass mirrors are tried.** The main one rate-limits in earnest — measured here, three
+refuge queries within a few minutes and it began refusing. This is the layer someone reaches for
+when they already want to be somewhere else, so one throttled host must not end it. A failure says
+"could not look up nearby places", never "nothing open" — the house rule.
+
+Still open:
+- Verified schemes run by councils exist in some countries and would beat OSM where they exist.
+- Hotels are the interesting gap: a lobby is one of the better places to walk into and 24-hour
+  reception is normal, but only 4 of 51 in central Oslo state hours, so most show as unconfirmed.
+- No walking directions to a refuge yet — tapping one centres the map on it, nothing more.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is

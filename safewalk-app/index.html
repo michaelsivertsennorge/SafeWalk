@@ -150,6 +150,16 @@
     <h2 id="nearMeTitle">Near me</h2>
     <p class="sheet-sub" id="nearMeSummary" aria-live="polite"></p>
     <ul class="near-list" id="nearMeList"></ul>
+
+    <!-- Everything else in this app tells you what to avoid. This is the only part that tells you
+         where to GO, which is what you actually want when something has already gone wrong. -->
+    <hr class="divider" />
+    <p class="sheet-label">Somewhere to go right now</p>
+    <p class="sheet-sub" id="refugeSummary" aria-live="polite">Looking for places that are open…</p>
+    <ul class="near-list" id="refugeList"></ul>
+    <p class="sheet-sub sheet-fineprint">Opening times come from OpenStreetMap and can be wrong or
+      missing. Anything we cannot confirm is marked, not guessed.</p>
+
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>

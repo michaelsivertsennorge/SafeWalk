@@ -2580,6 +2580,9 @@ document.getElementById('nearMeBtn').addEventListener('click', () => {
   cancelPicking();
   renderNearMe();
   openSheet('nearMeSheet');
+  // Not awaited: the ratings are already on screen, and a slow Overpass must not hold the sheet
+  // shut. The refuge list fills itself in underneath.
+  loadRefuges();
 });
 
 document.getElementById('legendToggleBtn').addEventListener('click', () => {
@@ -3964,6 +3967,159 @@ async function pollWatchedWalk() {
     watchPollTimer = null;
     keepAwake(false);
   }
+}
+
+
+// ---------- Somewhere to go ----------
+// Every other layer in this app tells you what to avoid. This one tells you where to GO, which is
+// what you want once something has already gone wrong: the nearest door you can walk through, open
+// now, with people behind it.
+//
+// No new data source and no partnerships. OpenStreetMap already knows, and the app already talks to
+// Overpass for street geometry. Measured over central Oslo on 2026-09-08: 1282 candidate places,
+// 773 with opening hours, 27 tagged 24/7 — and the coverage is best where it matters, supermarkets
+// 147/150 and pharmacies 46/50.
+//
+// The ranking is not just distance. A pharmacy and a hospital are places whose whole purpose is to
+// help someone in trouble; a restaurant is somewhere with people and light. Both beat a closer door
+// that might be an empty forecourt, so kind breaks ties before distance does.
+const REFUGE_RADIUS_M = 700;
+const REFUGE_SHOW = 5;
+
+// Lower sorts first. Judgement, and it should be argued with rather than tuned quietly: these are
+// ordered by how likely someone inside is to help a frightened stranger, not by how near they are.
+const REFUGE_KINDS = {
+  hospital:    { rank: 0, label: 'Hospital' },
+  police:      { rank: 1, label: 'Police station' },
+  pharmacy:    { rank: 2, label: 'Pharmacy' },
+  fuel:        { rank: 3, label: 'Petrol station' },
+  supermarket: { rank: 4, label: 'Supermarket' },
+  convenience: { rank: 4, label: 'Shop' },
+  hotel:       { rank: 5, label: 'Hotel' },
+  cafe:        { rank: 6, label: 'Café' },
+  restaurant:  { rank: 6, label: 'Restaurant' },
+  bar:         { rank: 7, label: 'Bar' },
+};
+
+let refugeLoadedFor = null;
+
+function refugeKindOf(tags) {
+  return REFUGE_KINDS[tags.amenity] ? tags.amenity
+    : REFUGE_KINDS[tags.shop] ? tags.shop
+    : tags.tourism === 'hotel' ? 'hotel'
+    : null;
+}
+
+async function loadRefuges() {
+  const summary = document.getElementById('refugeSummary');
+  const list = document.getElementById('refugeList');
+  if (!userLocation) {
+    summary.textContent = 'Turn on location to see places you can walk into nearby.';
+    list.innerHTML = '';
+    return;
+  }
+  const key = userLocation.lat.toFixed(3) + ',' + userLocation.lng.toFixed(3);
+  if (refugeLoadedFor === key && list.children.length) return; // already answered for here
+  refugeLoadedFor = key;
+
+  setLoadingStatus(summary, 'Looking for places that are open…');
+  list.innerHTML = '';
+
+  const { lat, lng } = userLocation;
+  const q = `[out:json][timeout:20];(` +
+    `node["amenity"~"^(pharmacy|hospital|police|fuel|cafe|bar|restaurant)$"](around:${REFUGE_RADIUS_M},${lat},${lng});` +
+    `node["shop"~"^(convenience|supermarket)$"](around:${REFUGE_RADIUS_M},${lat},${lng});` +
+    `node["tourism"="hotel"](around:${REFUGE_RADIUS_M},${lat},${lng});` +
+    `);out tags center;`;
+
+  // Both mirrors, in turn. The main one rate-limits in earnest — measured here, three refuge
+  // queries in a few minutes and it started refusing — and this is the layer someone reaches for
+  // when they already want to be somewhere else, so one throttled host must not be the end of it.
+  let res = null;
+  for (const mirror of OVERPASS_MIRRORS) {
+    res = await fetchWithTimeout(mirror, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(q),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }, 20000);
+    if (res) break;
+  }
+
+  if (!res) {
+    // The house rule: a failure must not read as "there is nowhere to go".
+    summary.textContent = isOffline()
+      ? 'You are offline, so nearby places cannot be looked up.'
+      : 'Could not look up nearby places just now.';
+    refugeLoadedFor = null; // so it tries again next time the sheet opens
+    return;
+  }
+
+  let data;
+  try { data = await res.json(); } catch { data = null; }
+  const candidates = ((data && data.elements) || [])
+    .map((el) => {
+      const tags = el.tags || {};
+      const kind = refugeKindOf(tags);
+      const elLat = el.lat != null ? el.lat : el.center && el.center.lat;
+      const elLng = el.lon != null ? el.lon : el.center && el.center.lon;
+      if (!kind || !tags.name || elLat == null || elLng == null) return null;
+      return {
+        name: tags.name,
+        kind,
+        lat: elLat,
+        lng: elLng,
+        open: isOpenNow(tags.opening_hours),
+        dist: haversine(lat, lng, elLat, elLng),
+      };
+    })
+    .filter(Boolean)
+    // Anything known to be shut is useless right now and is dropped. Unknown is kept, labelled —
+    // a hotel lobby whose hours nobody recorded is still worth knowing about at 1am.
+    .filter((p) => p.open !== false);
+
+  // Confirmed open comes first, ahead of kind. Sorting by kind alone returned five pharmacies for
+  // central Oslo — and at 1am, which is when anyone needs this, every one of them is shut and four
+  // were only on the list because their hours are unrecorded. A café we know is open beats a
+  // pharmacy that might be.
+  //
+  // Then at most two of any one kind, so the list cannot fill up with the same shop again.
+  const perKind = {};
+  const found = candidates
+    .sort((a, b) =>
+      (Number(b.open === true) - Number(a.open === true))
+      || (REFUGE_KINDS[a.kind].rank - REFUGE_KINDS[b.kind].rank)
+      || (a.dist - b.dist))
+    .filter((p) => {
+      perKind[p.kind] = (perKind[p.kind] || 0) + 1;
+      return perKind[p.kind] <= 2;
+    })
+    .slice(0, REFUGE_SHOW);
+
+  if (!found.length) {
+    summary.textContent = 'Nothing open found within a few minutes’ walk.';
+    return;
+  }
+
+  summary.textContent = `${found.length} place${found.length === 1 ? '' : 's'} you could walk into now:`;
+  found.forEach((p) => {
+    const li = document.createElement('li');
+    li.className = 'near-item refuge-item';
+    const bearing = compassPoint(bearingDegrees(lat, lng, p.lat, p.lng));
+    li.innerHTML = `
+      <div class="near-item-main">
+        <strong>${p.name}</strong>
+        <span class="refuge-kind">${REFUGE_KINDS[p.kind].label}</span>
+      </div>
+      <div class="near-item-sub">
+        ${describeDistance(p.dist)} ${bearing}
+        · <span class="${p.open ? 'refuge-open' : 'refuge-unknown'}">${p.open ? 'Open now' : 'Hours not recorded'}</span>
+      </div>`;
+    li.addEventListener('click', () => {
+      closeSheets();
+      map.setView([p.lat, p.lng], 17);
+    });
+    list.appendChild(li);
+  });
 }
 
 // ---------- Init ----------
