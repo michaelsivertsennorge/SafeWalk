@@ -334,6 +334,34 @@ function setLoadingStatus(el, text) {
   el.appendChild(document.createTextNode(text));
 }
 
+// Every Supabase call in this file was written as `const { error } = await ...`, which assumes
+// failure always arrives as a value. It does not. A phone with no signal makes fetch REJECT, so the
+// await throws, every line after it is skipped, and whatever was on screen stays exactly as it was.
+//
+// That single assumption produced three separate bugs reported from a real phone on 2026-09-08:
+// a mark that sat on the map looking saved while nothing was ever written; "Saving your new
+// password…" spinning forever after the password had in fact changed; and a sign-out that appeared
+// to do nothing. None of them logged anything a walker would ever see.
+//
+// This turns a thrown call back into the { data, error } shape every caller was already written
+// for, so the existing error handling — which was fine — finally gets to run.
+async function settled(call, what) {
+  try {
+    return await call;
+  } catch (thrown) {
+    // navigator.onLine lies in one direction — a wifi that goes nowhere still reports true — so a
+    // fetch that threw is treated as a lost connection whatever it claims. And the browser's own
+    // wording ("Failed to fetch", "Load failed", "NetworkError when attempting to fetch resource")
+    // is not a sentence to hand someone walking home; say the one thing that is true and useful.
+    const raw = (thrown && thrown.message) || '';
+    const networkish = !raw || /fetch|network|load failed|connection/i.test(raw);
+    const message = (isOffline() || networkish)
+      ? 'No connection just now, so this could not be saved.'
+      : raw;
+    return { data: null, error: { message, threw: true } };
+  }
+}
+
 // In-app replacement for window.confirm() — native confirm/alert/prompt dialogs are known to
 // silently no-op in some browsers' installed/standalone PWA mode (this app's manifest enables
 // that install), which would look exactly like "the button doesn't do anything."
@@ -503,10 +531,10 @@ function setPoliceLegend(state, count) {
 async function loadPoliceEvents() {
   if (!sb) { setPoliceLegend('failed'); return; }   // the pins path reports this; one banner is enough
   setPoliceLegend('loading');
-  const { data, error } = await sb
+  const { data, error } = await settled(sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
-    .gt('expires_at', new Date().toISOString());
+    .gt('expires_at', new Date().toISOString()), 'load police reports');
   if (error || !Array.isArray(data)) { setPoliceLegend('failed'); return; }
 
   policeEvents = data
@@ -2661,15 +2689,20 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
     setLoadingStatus(statusEl, 'Checking your current password…');
     // Re-signing in with the same account refreshes the session rather than replacing the user, so
     // nothing on the map changes. A wrong password fails here and leaves the old one in place.
-    const { error: reauthError } = await sb.auth.signInWithPassword({
+    const { error: reauthError } = await settled(sb.auth.signInWithPassword({
       email: currentUser.email,
       password: current,
-    });
-    if (reauthError) { statusEl.textContent = 'That current password is not right.'; return; }
+    }), 'check your password');
+    if (reauthError) {
+      statusEl.textContent = reauthError.threw
+        ? reauthError.message
+        : 'That current password is not right.';
+      return;
+    }
   }
 
   setLoadingStatus(statusEl, 'Saving your new password…');
-  const { error } = await sb.auth.updateUser({ password: next });
+  const { error } = await settled(sb.auth.updateUser({ password: next }), 'save your new password');
   if (error) { statusEl.textContent = error.message; return; }
 
   inPasswordRecovery = false;
@@ -2701,10 +2734,15 @@ document.getElementById('authForgotBtn').addEventListener('click', async () => {
   if (!email) { statusEl.textContent = 'Type your email address above first, then tap this again.'; return; }
 
   setLoadingStatus(statusEl, 'Sending your reset link…');
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appRedirectUrl() });
+  const { error } = await settled(sb.auth.resetPasswordForEmail(email, { redirectTo: appRedirectUrl() }), 'send the link');
   // Deliberately the same message either way. Saying "no account with that email" would turn this
   // button into a way to test whether any given person uses SafeWalk — and on this app, that leaks
   // something about where they walk.
+  // The one exception to saying the same thing either way: if the request never left the phone, no
+  // link is on its way, and telling someone to go and wait for one is a lie that costs them the
+  // evening. A connection failure says nothing about whether the account exists, so admitting it
+  // leaks nothing.
+  if (error && error.threw) { statusEl.textContent = error.message + ' Try again once you have a connection.'; return; }
   if (error && !/rate|limit|too many/i.test(error.message)) {
     statusEl.textContent = 'If there is an account for that address, a reset link is on its way. Check your spam folder too.';
     return;
@@ -2730,7 +2768,7 @@ document.getElementById('saveResetPasswordBtn').addEventListener('click', async 
   if (problem) { statusEl.textContent = problem; return; }
 
   setLoadingStatus(statusEl, 'Saving your new password…');
-  const { error } = await sb.auth.updateUser({ password: next });
+  const { error } = await settled(sb.auth.updateUser({ password: next }), 'save your new password');
   // The commonest failure here is a link that has already expired or been used, and Supabase's own
   // wording for it is opaque. Say what to do instead.
   if (error) {
@@ -2754,7 +2792,7 @@ async function refreshStanding() {
   const row = document.getElementById('standingRow');
   if (!row) return;
   if (!currentUser) { row.hidden = true; return; }
-  const { data, error } = await sb.rpc('my_standing');
+  const { data, error } = await settled(sb.rpc('my_standing'), 'load your standing');
   if (error || !data || !data.length) { row.hidden = true; return; }
   const s = data[0];
   const total = Number(s.confirmations) + Number(s.contradictions);
@@ -2869,9 +2907,9 @@ document.getElementById('authSubmitBtn').addEventListener('click', async () => {
 
   setLoadingStatus(statusEl, authMode === 'signin' ? 'Signing in…' : 'Creating your account…');
   const { data, error } = authMode === 'signin'
-    ? await sb.auth.signInWithPassword({ email, password })
+    ? await settled(sb.auth.signInWithPassword({ email, password }), 'sign you in')
     // emailRedirectTo, or the confirmation link goes to the project's Site URL — see appRedirectUrl().
-    : await sb.auth.signUp({ email, password, options: { emailRedirectTo: appRedirectUrl() } });
+    : await settled(sb.auth.signUp({ email, password, options: { emailRedirectTo: appRedirectUrl() } }), 'create your account');
 
   if (error) { statusEl.textContent = error.message; return; }
 
@@ -3031,12 +3069,15 @@ async function refreshPinsFromCloud({ force = false } = {}) {
     return; // still well inside what we already have
   }
 
+  // Each leg is settled separately. Unguarded, one rejected fetch took the whole Promise.all down,
+  // so the map never rendered AND the cached-pins fallback below never ran — the blank map this
+  // function exists to prevent.
   const [nearby, own, votes] = await Promise.all([
-    sb.rpc('pins_near', { p_lat: centre.lat, p_lng: centre.lng, p_radius_m: PIN_FETCH_RADIUS_M }),
+    settled(sb.rpc('pins_near', { p_lat: centre.lat, p_lng: centre.lng, p_radius_m: PIN_FETCH_RADIUS_M }), 'load the map'),
     // Your own marks come along regardless of distance, or "My reports & marks" would quietly lose
     // anything you rated in another town. Bounded by one person's activity, so it stays small.
-    currentUser ? sb.from('pins_with_scores').select('*').eq('is_mine', true) : Promise.resolve({ data: [] }),
-    currentUser ? sb.from('votes').select('pin_id').eq('user_id', currentUser.id) : Promise.resolve({ data: [] }),
+    currentUser ? settled(sb.from('pins_with_scores').select('*').eq('is_mine', true), 'load your marks') : Promise.resolve({ data: [] }),
+    currentUser ? settled(sb.from('votes').select('pin_id').eq('user_id', currentUser.id), 'load your votes') : Promise.resolve({ data: [] }),
   ]);
 
   if (nearby.error) {
@@ -3089,7 +3130,7 @@ map.on('moveend', () => { refreshPinsFromCloud(); });
 // writes that carry the creator's own rating, because that rating is what colours the pin: if it
 // does not save, the map shows the wrong answer while appearing to have worked.
 async function writeExpectingRows(query, what) {
-  const { data, error } = await query.select('pin_id');
+  const { data, error } = await settled(query.select('pin_id'), what);
   if (error) {
     showToast(`Could not ${what}: ${error.message}`);
     return false;
@@ -3104,16 +3145,22 @@ async function writeExpectingRows(query, what) {
 // call is a bug rather than a state to handle gracefully — hence the hard guard.
 async function persistCreate(pin) {
   if (!currentUser) return;
-  const { data, error } = await sb.from('pins').insert(pinToRow(pin)).select('id').single();
+  const { data, error } = await settled(sb.from('pins').insert(pinToRow(pin)).select('id').single(), 'save that mark');
   if (error) {
     // The cooldown is enforced by a row-level-security policy, so a suspended account gets a
     // generic policy violation. Translate it, or the person is left guessing why nothing saved.
     const blocked = /row-level security|policy/i.test(error.message || '');
     pins = pins.filter((x) => x.id !== pin.id); // it never reached the server; don't pretend it did
     renderPins();
+    renderMyReports();
     if (blocked) {
       showToast('Your marks are paused for now — see My Page for why.');
       refreshStanding();
+    } else if (error.threw) {
+      // The reported bug: with no signal the insert used to throw, none of this ran, and the mark
+      // stayed on the map looking saved until the app was next opened. Removing it is honest, but
+      // only if we say so — a mark that vanishes without a word is the same lie in reverse.
+      showToast(error.message + ' That mark was not kept — add it again once you have a signal.', 5000);
     } else {
       showToast('Could not save to your account: ' + error.message);
     }
@@ -3128,11 +3175,11 @@ async function persistCreate(pin) {
 
 async function persistUpdate(pin) {
   if (!currentUser) return;
-  const { error } = await sb.from('pins').update({
+  const { error } = await settled(sb.from('pins').update({
     lat: pin.lat, lng: pin.lng, radius_m: pin.radius || null, path: pin.paths || null,
     street_name: pin.streetName || null, creator_rating: pin.creatorRating,
     creator_note: pin.creatorNote || null,
-  }).eq('id', pin.id);
+  }).eq('id', pin.id), 'save changes');
   if (error) { showToast('Could not save changes: ' + error.message); return; }
   await writeExpectingRows(
     sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id),
@@ -3142,7 +3189,7 @@ async function persistUpdate(pin) {
 
 async function persistDelete(id) {
   if (!currentUser) return;
-  const { error } = await sb.from('pins').delete().eq('id', id);
+  const { error } = await settled(sb.from('pins').delete().eq('id', id), 'delete that mark');
   if (error) showToast('Could not delete: ' + error.message);
 }
 
@@ -3151,7 +3198,7 @@ async function persistDelete(id) {
 // function looks that up itself, so nothing here reveals authorship.
 async function recordRouteJudgement(pinIds, rating) {
   if (!currentUser || !pinIds.length) return;
-  const { error } = await sb.rpc('record_route_judgement', { p_pin_ids: pinIds, p_rating: rating });
+  const { error } = await settled(sb.rpc('record_route_judgement', { p_pin_ids: pinIds, p_rating: rating }), 'record that');
   // Deliberately quiet: this is bookkeeping about other people, and the walker's own feedback has
   // already been saved. Failing it loudly would be noise they can do nothing about.
   if (error) console.warn('Could not record route judgement:', error.message);
@@ -3164,8 +3211,12 @@ async function persistVote(pinId, rating, note) {
   // The note is the useful half of a rating: "mostly reported unsafe" says little, "no lighting
   // past the underpass, fine before 10pm" says what to do. It was being dropped entirely.
   if (note && note.trim()) row.note = note.trim().slice(0, 140);
-  const { error } = await sb.from("votes").insert(row);
-  if (error) showToast(error.message.includes('duplicate') ? "You've already rated this spot." : 'Could not save your vote.');
+  const { error } = await settled(sb.from("votes").insert(row), 'save your vote');
+  if (error) {
+    showToast(error.threw ? error.message + ' Your rating was not kept.'
+      : error.message.includes('duplicate') ? "You've already rated this spot."
+      : 'Could not save your vote.');
+  }
 }
 
 if (sb) {
