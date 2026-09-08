@@ -4189,6 +4189,20 @@ function refugeKindOf(tags) {
     : null;
 }
 
+// Hands the refuge to the ordinary route planner rather than inventing a second one, so it gets the
+// same hazard-aware ranking as any other walk — which matters here more than anywhere: being sent
+// towards a police cordon while trying to get away from something would be the worst possible bug
+// in this feature.
+function routeToRefuge(p) {
+  routePins.from = null;                       // null means "from where I am now"
+  routePins.to = { lat: p.lat, lng: p.lng, label: p.name };
+  document.getElementById('routeFrom').value = '';
+  document.getElementById('routeTo').value = p.name;
+  closeSheets();
+  openSheet('routeSheet');
+  document.getElementById('findRouteBtn').click();
+}
+
 async function loadRefuges() {
   const summary = document.getElementById('refugeSummary');
   const list = document.getElementById('refugeList');
@@ -4297,6 +4311,18 @@ async function loadRefuges() {
       closeSheets();
       map.setView([p.lat, p.lng], 17);
     });
+
+    // Showing someone a dot on a map is not the same as getting them there. This is the only part
+    // of the app that answers "where do I go", and it should finish the sentence.
+    const go = document.createElement('button');
+    go.className = 'btn btn-secondary refuge-go';
+    go.textContent = 'Walk me there';
+    go.addEventListener('click', (e) => {
+      e.stopPropagation();
+      routeToRefuge(p);
+    });
+    li.appendChild(go);
+
     list.appendChild(li);
   });
 }

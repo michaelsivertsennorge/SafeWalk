@@ -277,7 +277,10 @@ Still open:
 - Verified schemes run by councils exist in some countries and would beat OSM where they exist.
 - Hotels are the interesting gap: a lobby is one of the better places to walk into and 24-hour
   reception is normal, but only 4 of 51 in central Oslo state hours, so most show as unconfirmed.
-- No walking directions to a refuge yet — tapping one centres the map on it, nothing more.
+- Walking directions to a refuge were added the same day: "Walk me there" hands it to the ordinary
+  route planner rather than a second one, so it gets the same hazard-aware ranking as any other
+  walk. That matters more here than anywhere — being routed towards a police cordon while trying to
+  get away from something would be the worst bug this feature could have.
 
 ### Incident reports — **done, 2026-09-08** (migration 019)
 Different in kind from a rating, and the schema knows it. A rating is an opinion about a place; an

@@ -1329,3 +1329,12 @@ a:focus-visible {
   flex: none;
 }
 #sosNextList { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+
+/* "Walk me there" sits inside the refuge row, full width beneath the name and distance — this gets
+   pressed by someone who wants to be somewhere else, so it is a target rather than a link. */
+.refuge-go {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+  font-size: 13.5px;
+}
