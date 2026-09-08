@@ -208,6 +208,41 @@ Still open here:
   window (`backend/005`). Those need real traffic. Wrongly silencing an honest reporter is much
   worse than letting a careless one continue, so err toward leniency when tuning.
 
+### The outbox — **done, 2026-09-08**
+Marks made without a signal were lost. Since the error-handling fix they were honestly refused, but
+still lost, and that is the wrong answer for this app in particular: walk mode exists to be used
+while walking, and walking is when a phone drops to no bars. The moment the feature is most useful
+is the moment its writes are most likely to fail.
+
+A write that fails for lack of connection is now kept on the device and sent when there is one.
+Three rules keep it honest:
+
+- **A queued mark stays visible and says so.** It is not pretended to be saved, and it does not
+  vanish either — those were the original bug in its two opposite directions. My reports shows
+  "⏳ Waiting to upload", and the My Page hub row counts them.
+- **Only a connection failure is queued.** A mark the server actively refused — the reputation
+  cooldown, a duplicate vote — would be refused identically in an hour, so retrying forever would
+  be a queue that never drains. Those are dropped, and the walker is told.
+- **"Clear my data on this device" does not touch it.** That button promises your ratings survive
+  it, and a queued mark is a rating that has not been saved yet.
+
+`refreshPinsFromCloud` replaces the whole pins array with what the server returned, which by
+definition excludes anything queued, so `restorePendingPins()` runs after every one of the three
+paths through it — fresh data, cached fallback, and total failure. Missing it from any one of them
+reproduces the original complaint exactly.
+
+Verified in the browser by driving the real client through the whole cycle: an offline mark is
+queued and stays on the map labelled pending; it survives the pins array being replaced; it survives
+a genuine page reload; on reconnect it uploads, gets its real id, loses the pending flag and leaves
+the queue empty; and a server refusal is dropped rather than retried, with the count reported.
+
+Still open here:
+- Only pin creates and votes are queued. Edits and deletes of an already-saved mark still need a
+  connection, and say so.
+- The queue holds the walker's own unsent marks — coordinates and times, on their own device, until
+  each one lands. Capped at 200 and never sent anywhere except as the marks themselves, but it is a
+  local trace, which is worth remembering if the device itself is the threat.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is

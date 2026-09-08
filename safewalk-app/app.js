@@ -2223,9 +2223,12 @@ function renderMenuHints() {
     : 'Not set yet — SOS has nobody to call';
 
   const mine = pins.filter((p) => p.own).length;
-  document.getElementById('menuReportsHint').textContent = mine
-    ? `${mine} rating${mine === 1 ? '' : 's'} of yours`
-    : 'Nothing rated yet';
+  const waiting = typeof outboxForMe === 'function' ? outboxForMe().length : 0;
+  document.getElementById('menuReportsHint').textContent = waiting
+    ? `${mine} of yours — ${waiting} waiting to upload`
+    : mine
+      ? `${mine} rating${mine === 1 ? '' : 's'} of yours`
+      : 'Nothing rated yet';
 
   const theme = THEMES.find((t) => t.id === currentTheme());
   document.getElementById('menuThemeHint').textContent = theme ? theme.name : 'Colours and the map';
@@ -2354,6 +2357,7 @@ function renderMyReports() {
         ${p.radius ? '<span class="report-tag">Area</span>' : ''}
         ${p.paths ? '<span class="report-tag">🛣️ Street</span>' : ''}
         ${p.source === 'route' ? '<span class="report-tag">🧭 Route</span>' : ''}
+        ${p.pending ? '<span class="report-tag report-tag-pending">⏳ Waiting to upload</span>' : ''}
         <span class="report-date">${relativeDate(p.createdAt)}</span>
       </div>
       <div class="report-note">${p.streetName ? p.streetName + (p.creatorNote ? ' — ' + p.creatorNote : '') : (p.creatorNote ? p.creatorNote : 'No note added')}</div>
@@ -3086,10 +3090,16 @@ async function refreshPinsFromCloud({ force = false } = {}) {
     const cached = loadCachedPins();
     if (cached) {
       pins = cached.rows.map((r) => rowToPin(r, new Set()));
+      restorePendingPins(); // same reason as below: this assignment replaces the whole array
       renderPins();
       renderMyReports();
       showStaleBanner(cached.at);
     } else {
+      // No cache to fall back on, but anything queued is still the walker's own work and must not
+      // vanish just because the server could not be reached.
+      restorePendingPins();
+      renderPins();
+      renderMyReports();
       showToast("Couldn't load the safety map — check your connection.");
     }
     return;
@@ -3111,7 +3121,13 @@ async function refreshPinsFromCloud({ force = false } = {}) {
   const rows = [...byId.values()];
   pins = rows.map((r) => rowToPin(r, votedIds));
   cachePins(rows);
+  // Anything still queued is not in `rows` by definition, and this assignment has just replaced the
+  // whole array — so without this the mark someone made in a tunnel disappears the next time the
+  // map refreshes, which is the exact complaint the outbox exists to answer.
+  restorePendingPins();
   renderPins();
+  // A signal is back if this call succeeded, so this is the natural moment to drain the queue.
+  flushOutbox();
   renderMyReports();
 }
 
@@ -3157,10 +3173,15 @@ async function persistCreate(pin) {
       showToast('Your marks are paused for now — see My Page for why.');
       refreshStanding();
     } else if (error.threw) {
-      // The reported bug: with no signal the insert used to throw, none of this ran, and the mark
-      // stayed on the map looking saved until the app was next opened. Removing it is honest, but
-      // only if we say so — a mark that vanishes without a word is the same lie in reverse.
-      showToast(error.message + ' That mark was not kept — add it again once you have a signal.', 5000);
+      // No connection. The mark is kept on the device and sent when there is one, so it stays on
+      // the map — labelled, not pretended to be saved. Marking a street is most useful exactly
+      // where the signal is worst, so this is the normal path, not an edge case.
+      queueWrite({ kind: 'pin', localId: pin.id, row: pinToRow(pin) });
+      const restored = { ...pin, pending: true };
+      pins.push(restored);
+      renderPins();
+      renderMyReports();
+      showToast('No signal — kept on your phone and uploaded when you are back online.', 4000);
     } else {
       showToast('Could not save to your account: ' + error.message);
     }
@@ -3212,10 +3233,13 @@ async function persistVote(pinId, rating, note) {
   // past the underpass, fine before 10pm" says what to do. It was being dropped entirely.
   if (note && note.trim()) row.note = note.trim().slice(0, 140);
   const { error } = await settled(sb.from("votes").insert(row), 'save your vote');
+  if (error && error.threw) {
+    queueWrite({ kind: 'vote', row });
+    showToast('No signal — your rating is kept on your phone and sent when you are back online.', 4000);
+    return;
+  }
   if (error) {
-    showToast(error.threw ? error.message + ' Your rating was not kept.'
-      : error.message.includes('duplicate') ? "You've already rated this spot."
-      : 'Could not save your vote.');
+    showToast(error.message.includes('duplicate') ? "You've already rated this spot." : 'Could not save your vote.');
   }
 }
 
@@ -3432,6 +3456,152 @@ document.getElementById('walkStatus').addEventListener('click', undoWalkMark);
 // that actually fires when a phone browser is backgrounded; visibilitychange covers the rest.
 window.addEventListener('pagehide', flushWalkMark);
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushWalkMark(); });
+
+
+// ---------- Outbox ----------
+// Marks made without a signal used to be lost: honestly refused, since the last fix, but still
+// lost. That is the wrong answer for this app in particular. Walk mode exists to be used while
+// walking, and walking is exactly when a phone drops to no bars — so the moment the feature is most
+// useful is the moment its writes are most likely to fail. Losing a warning someone stopped to
+// record, because a tunnel ate the request, is not acceptable.
+//
+// So a failed write is kept on the device and sent later. Two rules keep this honest:
+//
+//   A queued mark stays visible and is labelled. It is not pretended to be saved, and it does not
+//   vanish either — both of those were the original bug in different directions.
+//
+//   Only a *connection* failure is queued. A mark the server actively refused — the reputation
+//   cooldown, a duplicate vote — will be refused identically in an hour, so retrying it forever
+//   would be a queue that never drains and a promise that is never kept.
+//
+// The queue holds the walker's own unsent marks, on their own device, and is deleted entry by entry
+// as each one lands. It is a record of where they have been, so it is capped, never uploaded
+// anywhere except as the marks themselves, and deliberately not touched by "Clear my data on this
+// device" — that button promises your ratings survive it, and these are ratings that have not been
+// saved yet.
+const OUTBOX_KEY = 'safewalk_outbox_v1';
+const OUTBOX_MAX = 200;
+
+function loadOutbox() {
+  try {
+    const v = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function saveOutbox(items) {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(items.slice(-OUTBOX_MAX)));
+  } catch {
+    // Storage full or blocked. Nothing useful to do — the caller has already told the walker
+    // whether their mark was kept, and lying about it now would be worse than the failure.
+  }
+}
+function outboxForMe() {
+  return currentUser ? loadOutbox().filter((e) => e.userId === currentUser.id) : [];
+}
+function queueWrite(entry) {
+  if (!currentUser) return;
+  const items = loadOutbox();
+  items.push({ ...entry, at: Date.now(), userId: currentUser.id });
+  saveOutbox(items);
+  renderMenuHints();
+}
+
+// A queued pin has no server id yet, so it keeps its local one until the insert succeeds.
+function outboxEntryToPin(entry) {
+  const r = entry.row;
+  return {
+    id: entry.localId,
+    lat: r.lat,
+    lng: r.lng,
+    radius: r.radius_m || undefined,
+    paths: r.path || undefined,
+    streetName: r.street_name || undefined,
+    safe: r.creator_rating === 'safe' ? 1 : 0,
+    danger: r.creator_rating === 'danger' ? 1 : 0,
+    notes: [],
+    createdAt: entry.at,
+    own: true,
+    pending: true,
+    source: r.source === 'route' ? 'route' : undefined,
+    creatorRating: r.creator_rating,
+    creatorNote: r.creator_note || '',
+    voters: [entry.userId],
+  };
+}
+
+// refreshPinsFromCloud replaces the whole pins array with what the server returned, which by
+// definition does not include anything still queued. Without this the mark disappears from the map
+// the moment the map refreshes — the original complaint, reproduced by the fix for it.
+function restorePendingPins() {
+  outboxForMe()
+    .filter((e) => e.kind === 'pin')
+    .forEach((e) => {
+      if (!pins.some((p) => p.id === e.localId)) pins.push(outboxEntryToPin(e));
+    });
+}
+
+async function sendOutboxEntry(entry) {
+  if (entry.kind === 'pin') {
+    const { data, error } = await settled(
+      sb.from('pins').insert(entry.row).select('id').single(), 'save that mark');
+    if (error) return error.threw ? 'retry' : 'refused';
+    // The creator's own first vote is what gives the pin its score, exactly as in persistCreate.
+    await settled(sb.from('votes').insert({
+      pin_id: data.id, user_id: entry.userId, rating: entry.row.creator_rating,
+    }), 'record your rating');
+    const onScreen = pins.find((p) => p.id === entry.localId);
+    if (onScreen) { onScreen.id = data.id; onScreen.pending = false; }
+    return 'sent';
+  }
+  if (entry.kind === 'vote') {
+    const { error } = await settled(sb.from('votes').insert(entry.row), 'save your vote');
+    if (error) return error.threw ? 'retry' : 'refused';
+    return 'sent';
+  }
+  return 'refused';
+}
+
+let flushingOutbox = false;
+async function flushOutbox({ quiet = true } = {}) {
+  if (flushingOutbox || !sb || !currentUser) return;
+  const mine = outboxForMe();
+  if (!mine.length) return;
+
+  flushingOutbox = true;
+  const keep = [];
+  let sent = 0;
+  let refused = 0;
+  for (let i = 0; i < mine.length; i++) {
+    const result = await sendOutboxEntry(mine[i]);
+    if (result === 'sent') { sent++; continue; }
+    if (result === 'refused') { refused++; continue; }
+    // Still no connection. Keep this one and everything after it, in order, rather than grinding
+    // the rest of the queue against a dead network.
+    keep.push(...mine.slice(i));
+    break;
+  }
+  // Anything belonging to another account on this device is left exactly as it was.
+  saveOutbox([...loadOutbox().filter((e) => e.userId !== currentUser.id), ...keep]);
+  flushingOutbox = false;
+
+  if (sent) {
+    renderPins();
+    renderMyReports();
+    if (!quiet) showToast(`${sent} mark${sent === 1 ? '' : 's'} uploaded.`);
+  }
+  if (refused) {
+    showToast(`${refused} mark${refused === 1 ? '' : 's'} could not be saved and ${refused === 1 ? 'was' : 'were'} dropped — see My Page.`, 5000);
+  }
+  renderMenuHints();
+}
+
+// The browser tells us the moment a signal comes back, which is the one event worth acting on
+// immediately: someone who marked a street in a tunnel gets it uploaded as they come out, without
+// having to reopen anything.
+window.addEventListener('online', () => flushOutbox({ quiet: false }));
 
 // ---------- Init ----------
 renderAccountState();

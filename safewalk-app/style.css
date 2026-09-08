@@ -1164,3 +1164,11 @@ a:focus-visible {
   cursor: pointer;
   padding: 4px 0;
 }
+
+/* A queued mark is neither saved nor lost, and the list has to say which. Amber rather than red:
+   nothing has gone wrong, it is simply still on its way. */
+.report-tag-pending {
+  color: var(--mixed);
+  border-color: var(--mixed);
+  background: color-mix(in srgb, var(--mixed) 12%, transparent);
+}
