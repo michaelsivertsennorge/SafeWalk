@@ -324,8 +324,14 @@ Still open:
   reported to anyone, and there is no appeal for a walker whose report is wrongly buried.
 - The reputation cooldown gates reporting (RLS), but incidents do not yet feed back into standing,
   so a serial false reporter is not slowed by their own record.
-- Nothing warns someone that they are walking towards a reported incident; the police layer has a
-  proximity alert and this does not.
+- Warning someone walking towards a report was added the same day: within 150m, only reports from
+  the last 24 hours, never your own, and once per report per session. A six-day-old incident is map
+  context rather than something worth a buzz. The banner is shared with the police alert but takes
+  an amber edge instead of solid red and always begins "Someone using SafeWalk reported" 2014 a
+  community claim must never borrow the police layer's authority. Kept dark rather than flipped to
+  a bright fill, because this appears on a phone at night where a light banner is both blinding and
+  conspicuous. Verified: fires when fresh and near, stays quiet for a four-day-old report 20m away,
+  stays quiet far from a fresh one, and does not repeat.
 
 ## Accessibility
 

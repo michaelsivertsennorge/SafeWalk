@@ -1268,7 +1268,9 @@ a:focus-visible {
   line-height: 1;
   cursor: pointer;
 }
-.incident-glyph::first-letter { display: inline-block; transform: rotate(-45deg); }
+/* The diamond is a rotated square, so the glyph inside is turned back — it sat on its side on the
+   first render. */
+.incident-glyph i { display: block; transform: rotate(-45deg); font-style: normal; }
 
 .incident-kinds { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .incident-kind {
@@ -1301,3 +1303,15 @@ a:focus-visible {
   background: color-mix(in srgb, var(--danger-strong) 82%, var(--bg));
   display: inline-block;
 }
+
+/* The same banner, carrying a community report rather than a police one. Kept dark rather than
+   flipped to a bright amber fill: this appears on a phone at night, and a light banner is both
+   blinding and conspicuous. The amber edge and the wording carry the distinction instead — a user
+   report must never wear the police layer's solid red and borrow its authority. */
+.police-alert.alert-user-report {
+  background: color-mix(in srgb, var(--mixed) 20%, var(--bg-elev));
+  border: 1.5px solid var(--mixed);
+  color: var(--text);
+}
+.police-alert.alert-user-report .police-alert-icon,
+.police-alert.alert-user-report .police-alert-dismiss { color: var(--mixed); }

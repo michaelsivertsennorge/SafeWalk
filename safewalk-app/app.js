@@ -557,6 +557,7 @@ async function loadPoliceEvents() {
   setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
   renderPoliceEvents();
   checkPoliceProximity();
+  checkIncidentProximity();
 }
 
 
@@ -673,6 +674,9 @@ function describeCategory(c) {
 function showPoliceAlert(events) {
   const el = document.getElementById('policeAlert');
   if (!el) return;
+  // The banner is shared with user reports, so clear their styling — a police warning wearing the
+  // community colour, or the reverse, is the one confusion this layer must never cause.
+  el.classList.remove('alert-user-report');
   const first = events[0];
   const what = describeCategory(first.category);
   const where = first.area ? `near ${first.area}` : 'near you';
@@ -922,6 +926,7 @@ function locate(recenter = true) {
       (pos) => {
         userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         checkPoliceProximity();
+        checkIncidentProximity();
         updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
         if (recenter) map.setView([userLocation.lat, userLocation.lng], 16);
         renderPins();
@@ -4159,6 +4164,52 @@ async function loadIncidents() {
   if (error || !Array.isArray(data)) return;
   incidents = data;
   renderIncidents();
+  checkIncidentProximity();
+}
+
+// Walking towards one is the moment this data is worth anything. The police layer has warned people
+// since it shipped; user reports did not, which meant the freshest warning on the map — the one
+// somebody stopped in the street to record — was the one that stayed silent.
+//
+// Two limits keep it from becoming noise, and both are deliberate rather than tuned:
+// only reports from the last day (a six-day-old incident is map context, not a warning worth a
+// buzz), and never your own.
+const INCIDENT_ALERT_RADIUS_M = 150;
+const INCIDENT_ALERT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const alertedIncidentIds = new Set();
+
+function checkIncidentProximity() {
+  if (!userLocation || !incidents.length) return;
+  const near = incidents.filter((inc) => {
+    if (alertedIncidentIds.has(inc.id) || inc.is_mine) return false;
+    if (Date.now() - new Date(inc.occurred_at).getTime() > INCIDENT_ALERT_MAX_AGE_MS) return false;
+    return haversine(userLocation.lat, userLocation.lng, inc.lat, inc.lng) <= INCIDENT_ALERT_RADIUS_M;
+  });
+  if (!near.length) return;
+  near.forEach((inc) => alertedIncidentIds.add(inc.id));
+  showIncidentAlert(near);
+}
+
+function showIncidentAlert(list) {
+  const el = document.getElementById('policeAlert');
+  if (!el) return;
+  const first = list[0];
+  const what = (INCIDENT_KINDS[first.category] || {}).label || 'an incident';
+  const when = describeAge(Date.now() - new Date(first.occurred_at).getTime());
+  const confirmed = Number(first.confirmed) || 0;
+  // "Someone using SafeWalk" every time, and a different colour from the police banner. The whole
+  // safeguard is that a stranger's report can never be mistaken for an official one — a warning
+  // that borrows the police layer's authority is exactly the laundering this design forbids.
+  el.classList.add('alert-user-report');
+  el.querySelector('.police-alert-text').textContent = list.length === 1
+    ? `Someone using SafeWalk reported ${what.toLowerCase()} near here, ${when}` +
+      (confirmed ? ` — ${confirmed} other${confirmed === 1 ? '' : 's'} confirmed it.` : ', not yet confirmed by anyone else.')
+    : `${list.length} reports from other people near here.`;
+  el.hidden = false;
+  buzz();
+  el.onclick = () => { el.hidden = true; el.classList.remove('alert-user-report'); openIncidentView(first.id); };
+  const dismiss = el.querySelector('.police-alert-dismiss');
+  if (dismiss) dismiss.onclick = (ev) => { ev.stopPropagation(); el.hidden = true; el.classList.remove('alert-user-report'); };
 }
 
 function renderIncidents() {
@@ -4167,7 +4218,7 @@ function renderIncidents() {
     const marker = L.marker([inc.lat, inc.lng], {
       icon: L.divIcon({
         className: 'incident-marker',
-        html: `<span class="incident-glyph">${INCIDENT_KINDS[inc.category]?.glyph || '⚠'}</span>`,
+        html: `<span class="incident-glyph"><i>${(INCIDENT_KINDS[inc.category] || {}).glyph || '⚠'}</i></span>`,
         iconSize: [30, 30],
         iconAnchor: [15, 15],
       }),
@@ -4423,6 +4474,7 @@ if (navigator.geolocation) {
       userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
       checkPoliceProximity();
+      checkIncidentProximity();
     },
     () => { /* keep last known location on error */ },
     { enableHighAccuracy: true, maximumAge: 20000, timeout: 15000 }
