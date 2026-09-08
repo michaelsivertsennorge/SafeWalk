@@ -500,6 +500,26 @@ function setPoliceLegend(state, count) {
   el.classList.toggle('legend-muted', state !== 'ok');
 }
 
+// The sixth instance of the same bug: checkPoliceProximity() below silently returns when
+// userLocation is unset, and the only thing that ever sets userLocation is the background
+// watchPosition a few hundred lines down — whose error handler used to do nothing at all. Deny
+// the location permission (or lose the fix for any other reason) and the "operation near you"
+// warning never fires again, for the rest of the session, with nothing on screen to say why. That
+// is indistinguishable from "nothing has happened near you," which is the reassuring reading, which
+// is the wrong way for this to fail. This line in the key is the only place that says otherwise.
+function setLocationLegend(state) {
+  const el = document.getElementById('legendLocation');
+  if (!el) return;
+  el.textContent = {
+    checking: 'Your location — checking…',
+    ok: 'Your location — on',
+    denied: "Your location — turned off, so nearby-police warnings can't reach you",
+    unavailable: 'Your location — not available right now, so nearby-police warnings are paused',
+    unsupported: "Your location — this browser can't provide it",
+  }[state] || 'Your location — checking…';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadPoliceEvents() {
   if (!sb) { setPoliceLegend('failed'); return; }   // the pins path reports this; one banner is enough
   setPoliceLegend('loading');
@@ -3446,13 +3466,20 @@ window.addEventListener("online", () => {
 // (and the SOS/route "my location" flows) reflect where the person actually is,
 // not just where they were when the app first loaded.
 if (navigator.geolocation) {
+  setLocationLegend('checking');
   navigator.geolocation.watchPosition(
     (pos) => {
       userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
       checkPoliceProximity();
+      setLocationLegend('ok');
     },
-    () => { /* keep last known location on error */ },
+    // Keep the last known location — a stale fix beats none. But say so: this handler used to be
+    // empty, which is what made the proximity warning fail silently. code 1 (PERMISSION_DENIED) is
+    // a choice someone made and won't undo itself; anything else is a fix that may still arrive.
+    (err) => { setLocationLegend(err && err.code === 1 ? 'denied' : 'unavailable'); },
     { enableHighAccuracy: true, maximumAge: 20000, timeout: 15000 }
   );
+} else {
+  setLocationLegend('unsupported');
 }

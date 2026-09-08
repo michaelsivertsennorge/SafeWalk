@@ -972,6 +972,11 @@ a:focus-visible {
   background: color-mix(in srgb, var(--danger-strong) 12%, transparent);
   display: inline-block;
 }
+.legend-location {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+}
 .police-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 2px; }
 .police-item {
   border: 1px solid var(--border);

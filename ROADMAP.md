@@ -165,7 +165,27 @@ Still open here:
   separate PRs for it (#3, #4, #6, #10, #12) because none of them ever merged and every fresh run
   found it again. It is fixed on main now, so the roadmap and the code finally agree.
 
+  **The proximity warning had the same failure mode one level up — fixed 2026-09-08.**
+  `checkPoliceProximity()` (the code behind "operation near you") silently returns when
+  `userLocation` is unset, and the only thing that ever set `userLocation` was a background
+  `watchPosition` whose error handler was `() => { /* keep last known location on error */ }` — no
+  log, no legend, nothing. Deny the location permission, or lose the fix for any other reason, and
+  the warning stops firing for the rest of the session with nothing on screen to say why — the exact
+  same "no reports near you" / "we could not find out" collapse the layer fix above already found,
+  one step further upstream. The map key now carries a "Your location" line that distinguishes
+  checking / on / turned off / temporarily unavailable / unsupported browser, driven by the watcher's
+  own success and error callbacks, permission denial (a choice that won't undo itself) worded
+  differently from a fix that may still arrive. **Not verified: never watched in a browser**, since
+  this environment has none — read against the documented `GeolocationPositionError` codes (1 =
+  `PERMISSION_DENIED`) and the existing `setLightingLegend`/`setPoliceLegend` pattern it copies.
+  Someone with a phone should deny the location prompt and confirm the key says so, then allow it and
+  confirm it flips to "on".
+
   Still open here:
+  - The above covers the passive warning. The 📍 locate button's own `locate()` has the same silent
+    error path (`() => { renderPins(); resolve(null); }`, no message) — lower stakes since a tap that
+    visibly does nothing is closer to self-explaining, but the map key now says why if someone checks
+    it.
   - **Street extraction now works — it never had before.** The regex was built with a template
     literal where `\b` is the backspace character rather than a word boundary, so the pattern
     began with U+0008 and could not match anything. Every incident ever synced was therefore
