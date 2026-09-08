@@ -26,7 +26,8 @@ node tests/permissions.test.js  # what the public API key can and cannot do (hit
 ```
 
 Covers the maths that decides what the app tells you about a street: distances, the street graph and
-its shortest paths, polyline decoding, and the rating bands. Exits non-zero on failure.
+its shortest paths, polyline decoding, the rating bands, and — since walk mode — where a mark made
+while walking actually lands. Exits non-zero on failure.
 
 One check in there is not about maths at all. `geo.js` and `app.js` both load as classic scripts,
 app.js second, so a same-named function in app.js silently replaces the tested one from geo.js —

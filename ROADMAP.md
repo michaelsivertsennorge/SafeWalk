@@ -31,6 +31,8 @@ Still worth doing here:
   `min-height: 44px` on the shared input rule fixed all twelve at once; verified by measuring each
   one in the browser at 375px, with the nested hidden forms opened so none reported a false zero.
 - No per-theme testing on a real phone outdoors yet.
+- Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
+  what makes the map readable for colourblind users, and no palette change may drop it.
 
 ### My Page is a hub of four sections — **done, 2026-09-08**
 Asked for by the owner. My Page used to be one long scroll: account, standing, a My-reports button,
@@ -87,8 +89,63 @@ is not SafeWalk, which looks like the reset silently failing.
 Still open here:
 - No rate-limit feedback beyond a generic retry message, and Supabase's own limit on reset emails is
   per-hour. Someone tapping twice will be told to wait a minute, which may understate it.
-- Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
-  what makes the map readable for colourblind users, and no palette change may drop it.
+
+### Walk mode — **done, 2026-09-08**
+Asked for by the owner, from the right observation: the app was built for marking places from a map,
+but the real use is picking a route and then rating it *while walking it*.
+
+Marking from an armchair and marking mid-walk are different problems. At home the hard part is
+**where** — tap the map, aim at a road, choose spot or street. While walking, the app already knows
+where you are, so the only thing left to say is how it felt. That is one bit, and it costs one
+press: no aiming, no reading, no precision.
+
+Three decisions follow, none of them cosmetic:
+
+- **A mark covers the stretch just walked, not a point.** Nobody stops mid-street to rate it — you
+  keep going and reach for the phone once you are past, so a point dropped at the moment of the tap
+  is already tens of metres wrong *and* says the wrong thing. 100m of route behind you is both what
+  you meant and what survives a GPS fix that is 20m out.
+- **A press votes on an existing pin where there is one**, and only creates a new one where there is
+  not. Better evidence, since agreement concentrates instead of scattering — and the stronger
+  privacy position, because votes are readable only by their author. A walk through a well-covered
+  area therefore adds *nothing* to the public map.
+- **A press is not written for four seconds.** A misfire in a pocket is likelier than a considered
+  tap, and an undo that has to reach the database to take something back has already left a trace.
+  Anything pending is flushed on `pagehide`, so locking the phone commits the mark rather than
+  losing it.
+
+The bar sits exactly where the bottom bar sits and replaces it, so the thumb goes where it already
+knows. Two targets, 72px — deliberately past the 44px minimum, because this is pressed while moving.
+It does **not** flash or change colour on a press: someone marking a stretch may be walking past the
+reason they are marking it, and a screen that lights up red announces what they just did. The
+confirmation is haptic.
+
+Two bugs found by testing rather than by reading, both of the house speciality:
+- With no GPS fix, `walkState.index` is still 0, so a press marked the **start of the route** as
+  though it had been walked — a false warning about a street the person may never have set foot on.
+  It now refuses and says why.
+- The geolocation error handler overwrote the undo line, which is time-limited and the only way back
+  from a misfire.
+
+Verified in the browser by driving the buttons through a simulated walk: the bar replaces the bottom
+bar and restores it, a press writes nothing until the window closes, undo writes nothing at all, a
+committed mark creates a *street* pin spanning six route vertices, an existing foreign pin gets a
+vote and no new row, a repeat press on the same stretch is refused with the right message for a pin
+that is yours versus someone else's, being 400m off route is refused, and no-fix is refused. The
+pure geometry has nine tests in `tests/geo.test.js` (82 assertions total), including the one that
+matters most: `routeProgress` searching forward so an out-and-back route does not snap the return
+leg onto the outbound one and mark the wrong half.
+
+**Not verified: any of it in motion.** Every position above was set by hand. Walking an actual route
+outdoors, with real GPS drift and a real phone, is the only thing that settles whether 100m and 120m
+are the right numbers.
+
+Still open here:
+- Arrival is still the existing whole-route verdict rather than a street-by-street list. Finishing a
+  walk lands on it, which is the right place, but "Storgata, Torggata, Youngs gate — anything feel
+  off?" would catch more of the people who never touched the phone.
+- No street name on a walk mark, so they show as unnamed stretches. Reverse-geocoding each one would
+  be a Nominatim call per press, which its usage policy does not allow.
 
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
@@ -215,7 +272,7 @@ a control, and enlarging it would put a tap target over the map.
   development browser, proven by an A/B against an unrelated server. Airplane mode on a phone,
   now that the app is on HTTPS, is the only thing that settles it.
 - **Test coverage is thin.** `tests/geo.test.js` now covers the pure maths in `safewalk-app/geo.js`
-  (22 assertions: distances, street graph, shortest paths, polyline decoding, rating bands). Run it
+  (82 assertions: distances, street graph, shortest paths, polyline decoding, rating bands, route scoring, and where a mark made while walking lands). Run it
   with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the auth gates, the
   reputation flow and all DOM behaviour are still hand-verified only. Route scoring in particular
   deserves tests; it lives in `app.js` and reads the global `pins`, so it needs a small refactor to
@@ -231,7 +288,14 @@ a control, and enlarging it would put a tap target over the map.
 1. **Never publish authorship.** `pins_with_scores` exposes `is_mine`, never `user_id`; `votes` and
    `pin_confirmations` are not readable by other users. Grouping pins by author reconstructs where an
    individual walks and when.
-2. **Bump `safewalk-app/version.json`** on any client change, or open apps keep running the old build.
-3. **Migrations are append-only.** Never edit an applied file in `backend/`; add the next number.
-4. **Only the anon key belongs in the repo.** Never the `service_role` key or the database password.
-5. **Walking and biking only.** Never car routing — the app is for people on foot.
+2. **Never publish other people's pin timestamps at better than day resolution** (migration 017 —
+   `date_trunc('day', ...)` in the view, and `created_at` revoked from the table grant). Removing
+   `user_id` closed the grouping key but not the trail: pins made seconds apart along a contiguous
+   path are one person walking, and order plus geometry draws the path. Walk mode produces exactly
+   that shape by design. Anything that wants to show "20 minutes ago" on a fresh warning is
+   reopening this trade and must do so deliberately. The same lesson as 012 applies — fixing only
+   the view leaves the column readable straight off the table.
+3. **Bump `safewalk-app/version.json`** on any client change, or open apps keep running the old build.
+4. **Migrations are append-only.** Never edit an applied file in `backend/`; add the next number.
+5. **Only the anon key belongs in the repo.** Never the `service_role` key or the database password.
+6. **Walking and biking only.** Never car routing — the app is for people on foot.

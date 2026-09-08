@@ -1754,6 +1754,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
   setLoadingStatus(status, 'Locating your route…');
   activeRouteCoords = null;
   routeFeedbackEl.hidden = true;
+  document.getElementById("startWalkBtn").hidden = true;
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
@@ -1892,6 +1893,8 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       });
       activeRouteCoords = entries[rank].coords;
       routeFeedbackEl.hidden = false;
+      // Offered only once a route is on the map, because walk mode has nothing to follow without one.
+      document.getElementById("startWalkBtn").hidden = false;
       if (fitView) {
         if (!keepSheetOpen) closeSheets();
         map.fitBounds(entries[rank].poly.getBounds(), { padding: [40, 40] });
@@ -3107,6 +3110,198 @@ if (sb) {
     refreshStanding();
   });
 }
+
+
+// ---------- Walk mode ----------
+// Rating a street from an armchair and rating it while walking down it are different problems. At
+// home the hard part is WHERE — you tap a map, aim at a road, choose spot or street. While walking,
+// the app already knows where you are, so the only thing left to say is how it felt. That is one
+// bit, and it should cost one press: no aiming, no reading, no precision.
+//
+// Three decisions follow from that, and none of them are cosmetic.
+//
+// A mark covers the stretch just walked, not a point. Nobody stops mid-street to rate it — you keep
+// going and reach for the phone once you are past, so a point dropped at the moment of the tap is
+// already tens of metres wrong and says the wrong thing. WALK_MARK_SPAN_M of route behind you is
+// both what you meant and what survives a GPS fix that is 20m out.
+//
+// A press votes on an existing pin wherever there is one, and only creates a new pin when there is
+// not. That is better evidence — agreement concentrates instead of scattering — and it is also the
+// stronger privacy position: votes are readable only by their author, so a walk through a
+// well-covered area leaves nothing new on the public map at all.
+//
+// A press is not written for WALK_UNDO_MS. A misfire in your pocket is likelier than a considered
+// tap here, and an undo that has to reach the database to take something back is an undo that
+// leaves a trace. Anything still pending is flushed the moment the page is hidden, so locking the
+// phone commits the mark rather than losing it.
+const WALK_MARK_SPAN_M = 100;
+const WALK_UNDO_MS = 4000;
+// Beyond this, "the stretch you just walked" is not a stretch of the route at all. Marking anyway
+// would put someone's warning on a street they were nowhere near.
+const WALK_OFF_ROUTE_M = 120;
+
+let walkState = null;
+
+function walkBarEl() { return document.getElementById('walkBar'); }
+function setWalkStatus(text) { document.getElementById('walkStatus').textContent = text; }
+
+function startWalk() {
+  if (!activeRouteCoords || activeRouteCoords.length < 2) {
+    showToast('Pick a route first, then start walking it.');
+    return;
+  }
+  // Asked for now rather than at the first press: being bounced to a sign-in sheet mid-street, one
+  // handed, is exactly the moment not to ask.
+  if (!requireAccount('to mark streets while you walk')) return;
+
+  walkState = { coords: activeRouteCoords, index: 0, marked: 0, pending: null, timer: null, watchId: null };
+  closeSheets();
+  walkBarEl().hidden = false;
+  document.querySelector('.bottom-bar').hidden = true;
+  setWalkStatus('Walking — tap either button for the stretch you just passed');
+
+  if (navigator.geolocation) {
+    walkState.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!walkState) return;
+        userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
+        // From the last known index forward: a route that doubles back past its own start would
+        // otherwise snap the return leg onto the outbound one and mark the wrong half.
+        const p = routeProgress(walkState.coords, userLocation.lat, userLocation.lng, walkState.index);
+        if (p) { walkState.index = p.index; walkState.offRouteM = p.offRouteM; walkState.hasFix = true; }
+      },
+      () => {
+        // Never over the undo line: that message is time-limited and is the only way back from a
+        // misfire, and a location warning that erases it costs more than it explains.
+        if (walkState && !walkState.pending) setWalkStatus('Waiting for your location — marks are paused until it arrives.');
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+  }
+}
+
+function finishWalk({ silent = false } = {}) {
+  if (!walkState) return;
+  flushWalkMark();
+  if (walkState.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(walkState.watchId);
+  const marked = walkState.marked;
+  walkState = null;
+  walkBarEl().hidden = true;
+  document.querySelector('.bottom-bar').hidden = false;
+  if (silent) return;
+  // Most people will not have touched the phone at all on the way. The whole-route verdict is the
+  // one question that still catches them, so land on it rather than on the map.
+  openSheet('routeSheet');
+  document.getElementById('routeFeedback').scrollIntoView({ block: 'center' });
+  showToast(marked
+    ? `Walk finished — ${marked} stretch${marked === 1 ? '' : 'es'} marked. How was the route overall?`
+    : 'Walk finished. How was the route overall?');
+}
+
+// Writes the pending mark for real. Called by the undo timer, by anything that supersedes it, and
+// by the page-hidden handler — so a mark is never lost to a locked screen, only ever to a
+// deliberate undo.
+function flushWalkMark() {
+  if (!walkState || !walkState.pending) return;
+  const mark = walkState.pending;
+  walkState.pending = null;
+  clearTimeout(walkState.timer);
+  walkState.timer = null;
+
+  const mid = pathMidpoint(mark.path);
+  const existing = mid ? findNearbyPin(mid.lat, mid.lng, 60) : null;
+  const voterId = currentVoterId();
+
+  if (existing) {
+    if ((existing.voters || []).includes(voterId)) {
+      // Marks span WALK_MARK_SPAN_M and match within 60m of their middle, so two presses less than
+      // about 60m apart are describing the same stretch. One rating per person per stretch is the
+      // rule everywhere else in the app and it holds here — but the bar has to say so, or a press
+      // that changes nothing reads as a press that did not register.
+      setWalkStatus(existing.own
+        ? 'Already marked this stretch — walk on a little and tap again for the next one.'
+        : 'You rated this stretch before, so it still counts once.');
+      return;
+    }
+    if (mark.rating === 'safe') existing.safe++; else existing.danger++;
+    existing.voters = [...(existing.voters || []), voterId];
+    if (!existing.own) recordRouteJudgement([existing.id], mark.rating);
+    persistVote(existing.id, mark.rating, '');
+  } else {
+    const pin = {
+      id: 'p-' + Math.random().toString(36).slice(2),
+      lat: mid.lat,
+      lng: mid.lng,
+      paths: [mark.path],
+      streetName: undefined,
+      safe: mark.rating === 'safe' ? 1 : 0,
+      danger: mark.rating === 'danger' ? 1 : 0,
+      notes: [],
+      createdAt: Date.now(),
+      own: true,
+      source: 'route',
+      creatorRating: mark.rating,
+      creatorNote: '',
+      voters: [voterId],
+    };
+    pins.push(pin);
+    persistCreate(pin);
+  }
+  walkState.marked++;
+  renderPins();
+}
+
+function undoWalkMark() {
+  if (!walkState || !walkState.pending) return;
+  clearTimeout(walkState.timer);
+  walkState.pending = null;
+  walkState.timer = null;
+  setWalkStatus('Taken back. Nothing was saved.');
+  buzz(10);
+}
+
+function markWalk(rating) {
+  if (!walkState) return;
+  // Without a fix, walkState.index is still 0 — so a press here would quietly mark the START of the
+  // route as though you had walked it, which is a false warning on a street you may never have set
+  // foot on. Refusing and saying why is the only honest option; this app must not invent evidence.
+  if (!walkState.hasFix) {
+    setWalkStatus('No location fix yet, so there is no stretch to mark. Nothing was saved.');
+    return;
+  }
+  if (walkState.offRouteM != null && walkState.offRouteM > WALK_OFF_ROUTE_M) {
+    setWalkStatus(`You are about ${Math.round(walkState.offRouteM)}m off this route — rejoin it to mark a stretch.`);
+    return;
+  }
+  const path = trailingRouteSegment(walkState.coords, walkState.index, WALK_MARK_SPAN_M);
+  if (!path) { setWalkStatus('Not enough of the route walked yet to mark a stretch.'); return; }
+
+  // A second press supersedes the first rather than queuing behind it: two taps inside the undo
+  // window is someone correcting themselves, not someone marking two stretches of the same 100m.
+  if (walkState.pending) undoWalkMark();
+  walkState.pending = { rating, path };
+  setWalkStatus(rating === 'safe' ? 'Marked as fine — tap here to undo' : 'Marked as off — tap here to undo');
+  document.getElementById('walkStatus').classList.add('walk-undoable');
+  buzz(rating === 'safe' ? 15 : 30);
+  walkState.timer = setTimeout(() => {
+    flushWalkMark();
+    if (!walkState) return;
+    document.getElementById('walkStatus').classList.remove('walk-undoable');
+    setWalkStatus('Saved. Keep going — tap again whenever it changes.');
+  }, WALK_UNDO_MS);
+}
+
+document.getElementById('startWalkBtn').addEventListener('click', startWalk);
+document.getElementById('walkFineBtn').addEventListener('click', () => markWalk('safe'));
+document.getElementById('walkOffBtn').addEventListener('click', () => markWalk('danger'));
+document.getElementById('walkFinishBtn').addEventListener('click', () => finishWalk());
+document.getElementById('walkStatus').addEventListener('click', undoWalkMark);
+
+// A locked screen or a switched app must commit what is pending, not drop it. pagehide is the one
+// that actually fires when a phone browser is backgrounded; visibilitychange covers the rest.
+window.addEventListener('pagehide', flushWalkMark);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushWalkMark(); });
 
 // ---------- Init ----------
 renderAccountState();

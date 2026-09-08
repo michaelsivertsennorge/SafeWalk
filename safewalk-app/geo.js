@@ -546,6 +546,74 @@ function parseWktLineStringZ(wkt) {
 
   return points.length >= 2 ? points : null;
 }
+
+// ---------- Walking a route ----------
+// Where along a route someone currently is. Returns the index of the route vertex they are nearest
+// to, plus how far off the line they are, so the caller can tell "walking it" from "nowhere near
+// it" — a phone that has wandered 300m off the route should not be marking streets on it.
+//
+// Searching forward from the last known index rather than the whole line: a route that doubles back
+// past its own start (out and home the same way, which is the commonest walk there is) otherwise
+// snaps to the wrong half, and every mark for the second leg lands on the first.
+function routeProgress(coords, lat, lng, fromIndex = 0) {
+  if (!Array.isArray(coords) || coords.length === 0) return null;
+  const start = Math.max(0, Math.min(fromIndex, coords.length - 1));
+  let bestIndex = start;
+  let bestDist = Infinity;
+  for (let i = start; i < coords.length; i++) {
+    const d = haversine(lat, lng, coords[i][0], coords[i][1]);
+    if (d < bestDist) { bestDist = d; bestIndex = i; }
+  }
+  return { index: bestIndex, offRouteM: bestDist };
+}
+
+// The stretch just walked: back along the route from `index` until `metres` have been covered.
+//
+// This is the whole reason walk mode marks a segment instead of a point. Nobody stops mid-street to
+// rate it — you keep walking and reach for the phone once you are past, so by the time the tap
+// lands you are tens of metres beyond what you meant. A point dropped at that moment is in the
+// wrong place and says the wrong thing; the stretch behind you is both what you meant and what
+// survives a GPS fix that is 20m out.
+//
+// Always returns at least two points when the route has two, so a mark made in the first few steps
+// still describes a line rather than collapsing to nothing.
+function trailingRouteSegment(coords, index, metres = 100) {
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const end = Math.max(1, Math.min(index, coords.length - 1));
+  let covered = 0;
+  let start = end;
+  while (start > 0 && covered < metres) {
+    covered += haversine(coords[start][0], coords[start][1], coords[start - 1][0], coords[start - 1][1]);
+    start--;
+  }
+  if (start === end) start = Math.max(0, end - 1);
+  return coords.slice(start, end + 1).map(([la, ln]) => [la, ln]);
+}
+
+// Midpoint by distance along a path, used to ask "is there already a pin for this stretch?" from
+// the middle of it rather than from either end, where the answer depends on which way you walked.
+function pathMidpoint(path) {
+  if (!Array.isArray(path) || !path.length) return null;
+  if (path.length === 1) return { lat: path[0][0], lng: path[0][1] };
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    total += haversine(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
+  }
+  let walked = 0;
+  for (let i = 1; i < path.length; i++) {
+    const leg = haversine(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
+    if (walked + leg >= total / 2) {
+      const t = leg === 0 ? 0 : (total / 2 - walked) / leg;
+      return {
+        lat: path[i - 1][0] + (path[i][0] - path[i - 1][0]) * t,
+        lng: path[i - 1][1] + (path[i][1] - path[i - 1][1]) * t,
+      };
+    }
+    walked += leg;
+  }
+  const last = path[path.length - 1];
+  return { lat: last[0], lng: last[1] };
+}
 // Usable both as a plain <script> in the browser (attaches to globalThis, which is how app.js
 // picks it up) and as a CommonJS module under Node, which is what lets the tests run headless.
 if (typeof module !== 'undefined' && module.exports) {
@@ -555,5 +623,6 @@ if (typeof module !== 'undefined' && module.exports) {
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
     bearingDegrees, compassPoint, describeDistance, describeAge, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
+    routeProgress, trailingRouteSegment, pathMidpoint,
   };
 }

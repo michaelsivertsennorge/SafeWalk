@@ -697,6 +697,86 @@ check('routeRankingClaim: survives being handed nothing', () => {
   eq(geo.routeRankingClaim(undefined).haveEvidence, false);
 });
 
+
+// ---------------------------------------------------------------------------
+// Walking a route. These decide WHERE a mark made while walking ends up, which is the difference
+// between warning people about the alley you meant and warning them about the next street.
+
+// A straight line east along 59.9333, roughly 20m between vertices.
+const straightRoute = Array.from({ length: 21 }, (_, i) => [59.9333, 10.75 + i * 0.00036]);
+
+check('routeProgress: finds where along the route you are', () => {
+  const p = geo.routeProgress(straightRoute, 59.9333, 10.75 + 10 * 0.00036);
+  eq(p.index, 10);
+  near(p.offRouteM, 0, 1);
+});
+
+check('routeProgress: reports how far off the line you have strayed', () => {
+  // ~110m north of the route.
+  const p = geo.routeProgress(straightRoute, 59.9343, 10.75 + 5 * 0.00036);
+  eq(p.index, 5);
+  near(p.offRouteM, 111, 15, 'so walk mode can refuse to mark a street you are not on');
+});
+
+check('routeProgress: searching forward stops an out-and-back snapping to the wrong leg', () => {
+  // Out along the line and straight back — every coordinate appears twice.
+  const outAndBack = straightRoute.concat([...straightRoute].reverse());
+  const here = [59.9333, 10.75 + 3 * 0.00036];
+  // Without fromIndex it legitimately matches the outbound leg...
+  eq(geo.routeProgress(outAndBack, here[0], here[1]).index, 3);
+  // ...but on the way home, having already reached the far end, it must not jump back to index 3
+  // and re-mark the outbound stretch.
+  const home = geo.routeProgress(outAndBack, here[0], here[1], 21);
+  eq(home.index, 38, 'the return leg, not the outbound one');
+  near(home.offRouteM, 0, 1);
+});
+
+check('routeProgress: survives an empty or missing route', () => {
+  eq(geo.routeProgress([], 59.9, 10.7), null);
+  eq(geo.routeProgress(null, 59.9, 10.7), null);
+});
+
+check('trailingRouteSegment: returns the stretch just walked, not a point', () => {
+  const seg = geo.trailingRouteSegment(straightRoute, 15, 100);
+  // ~20m per step, so 100m is five steps back: six vertices inclusive.
+  eq(seg.length, 6);
+  eq(seg[seg.length - 1][1], straightRoute[15][1], 'ends where you are');
+  let len = 0;
+  for (let i = 1; i < seg.length; i++) len += geo.haversine(seg[i - 1][0], seg[i - 1][1], seg[i][0], seg[i][1]);
+  near(len, 100, 12, 'covers about the distance asked for');
+});
+
+check('trailingRouteSegment: never collapses to a single point near the start', () => {
+  // Two steps in, 100m of history does not exist yet — it must still describe a line.
+  const seg = geo.trailingRouteSegment(straightRoute, 1, 100);
+  eq(seg.length >= 2, true, 'a one-point path would be marked as a spot, not a street');
+});
+
+check('trailingRouteSegment: is a copy, so editing a mark cannot corrupt the route', () => {
+  const seg = geo.trailingRouteSegment(straightRoute, 5, 60);
+  seg[0][0] = 0;
+  eq(straightRoute[3][0], 59.9333, 'the live route is untouched');
+});
+
+check('trailingRouteSegment: survives a route too short to walk', () => {
+  eq(geo.trailingRouteSegment([[59.9, 10.7]], 0, 100), null);
+  eq(geo.trailingRouteSegment(null, 0, 100), null);
+});
+
+check('pathMidpoint: measures along the path, not between its ends', () => {
+  // Bunched at the start, one long leg at the end: the mean of the coordinates would sit far from
+  // the true middle, which is what makes "is there already a pin here?" ask in the wrong place.
+  const lumpy = [[59.9333, 10.7500], [59.9333, 10.7501], [59.9333, 10.7502], [59.9333, 10.7600]];
+  const mid = geo.pathMidpoint(lumpy);
+  const half = geo.haversine(59.9333, 10.75, 59.9333, 10.76) / 2;
+  near(geo.haversine(59.9333, 10.75, mid.lat, mid.lng), half, 3, 'halfway by distance walked');
+});
+
+check('pathMidpoint: survives degenerate paths', () => {
+  eq(geo.pathMidpoint([[59.9, 10.7]]).lat, 59.9);
+  eq(geo.pathMidpoint([]), null);
+  eq(geo.pathMidpoint(null), null);
+});
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
