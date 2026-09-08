@@ -2659,6 +2659,8 @@ function setAuthMode(mode) {
     ? 'New here? Create an account'
     : 'Already have an account? Sign in';
   document.getElementById('authPassword').autocomplete = signin ? 'current-password' : 'new-password';
+  // Resetting a password you haven't set yet makes no sense — only offer it alongside signing in.
+  document.getElementById('forgotPasswordBtn').hidden = !signin;
   // When a write action sent us here, lead with what the sign-in is actually for.
   document.getElementById('authStatus').textContent = authReason ? `Sign in ${authReason}.` : '';
 }
@@ -2709,6 +2711,50 @@ document.getElementById('authSubmitBtn').addEventListener('click', async () => {
   authReason = '';
   closeSheets();
   showToast(authMode === 'signin' ? 'Signed in.' : 'Account created.');
+  buzz();
+});
+
+// The change-password form in Profile deliberately requires the current password, which is exactly
+// what someone who has forgotten it does not have. This is the other half: no memory of the old
+// password needed, just proof of owning the inbox behind the email.
+document.getElementById('forgotPasswordBtn').addEventListener('click', async () => {
+  const email = document.getElementById('authEmail').value.trim();
+  const statusEl = document.getElementById('authStatus');
+  if (!sb) { statusEl.textContent = 'Cloud sync is unavailable — check your connection.'; return; }
+  if (!email) { statusEl.textContent = 'Enter your email above, then tap "Forgot password?" again.'; return; }
+
+  setLoadingStatus(statusEl, 'Sending a reset link…');
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname,
+  });
+  // Supabase does not say whether that address has an account either way, on purpose — it would let
+  // someone check who is registered. The message here has to keep that same silence.
+  statusEl.textContent = error
+    ? error.message
+    : `If ${email} has a SafeWalk account, a reset link is on its way. Open it on this device to choose a new password.`;
+});
+
+// Opening the link from the reset email lands back here with a recovery session already signed in —
+// Supabase's client reads the token out of the URL itself, before any of this code runs. That
+// session can change a password with no old one to check, which is exactly what a locked-out person
+// needs and exactly why the flow above cannot just reuse the Profile form.
+document.getElementById('recoverySaveBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('recoveryStatus');
+  const next = document.getElementById('recoveryNewPassword').value;
+  const again = document.getElementById('recoveryConfirmPassword').value;
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish this.'; return; }
+  if (!next) { statusEl.textContent = 'Enter a new password.'; return; }
+  if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
+  if (next !== again) { statusEl.textContent = 'The two passwords do not match.'; return; }
+
+  setLoadingStatus(statusEl, 'Saving your new password…');
+  const { error } = await sb.auth.updateUser({ password: next });
+  if (error) { statusEl.textContent = error.message; return; }
+
+  document.getElementById('recoveryNewPassword').value = '';
+  document.getElementById('recoveryConfirmPassword').value = '';
+  closeSheets();
+  showToast('Password changed — you are signed in.');
   buzz();
 });
 
@@ -2914,7 +2960,6 @@ async function writeExpectingRows(query, what) {
   }
   return true;
 }
-// call is a bug rather than a state to handle gracefully — hence the hard guard.
 async function persistCreate(pin) {
   if (!currentUser) return;
   const { data, error } = await sb.from('pins').insert(pinToRow(pin)).select('id').single();
@@ -2983,13 +3028,23 @@ async function persistVote(pinId, rating, note) {
 
 if (sb) {
   // Fires on load with the restored session too, so this is also how the map gets its first fill.
-  sb.auth.onAuthStateChange(async (_event, session) => {
+  sb.auth.onAuthStateChange(async (event, session) => {
     currentUser = session ? session.user : null;
     renderAccountState();
     // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
     // though the location has not moved.
     await refreshPinsFromCloud({ force: true });
     refreshStanding();
+    // Supabase parses the recovery token out of the URL and signs this session in before this
+    // handler ever runs — by this point currentUser above is already set. Without this branch
+    // that would just look like an ordinary sign-in, and someone who forgot their password would
+    // land on the map no better off than before they opened the email.
+    if (event === 'PASSWORD_RECOVERY') {
+      document.getElementById('recoveryStatus').textContent = '';
+      document.getElementById('recoveryNewPassword').value = '';
+      document.getElementById('recoveryConfirmPassword').value = '';
+      openSheet('recoverySheet');
+    }
   });
 }
 

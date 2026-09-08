@@ -58,11 +58,35 @@ password, so the two network calls (`signInWithPassword` to re-authenticate, the
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
 Still open here:
-- There is no "forgot password" flow. Someone who cannot remember their password has no way back
-  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
-  is the missing half.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
+
+### Forgot password — **done, 2026-09-08, unverified end to end**
+The change-password form in Profile deliberately requires the old password, which is exactly what
+someone who forgot it does not have — this was the missing way back in. A "Forgot password?" link
+on the sign-in sheet (signin mode only) calls `resetPasswordForEmail(email, { redirectTo:
+location.origin + location.pathname })`. Its status message deliberately doesn't say whether the
+address has an account, matching Supabase's own refusal to say — a flow that confirmed registered
+emails would turn a password reset into an account-enumeration tool.
+
+Opening the emailed link lands back on the app with a recovery session already established —
+supabase-js parses the token out of the URL itself before any app code runs, and fires
+`onAuthStateChange` with `event === 'PASSWORD_RECOVERY'`, which was previously ignored (`_event`,
+unused). That now opens a new `recoverySheet`: two password fields, no old password asked for
+(there is a recovery session instead), calling `updateUser({ password })`.
+
+**Not verified: any of it actually running.** This needs a real inbox and a real click, neither
+reachable from here. Specifically unverified:
+- Whether `resetPasswordForEmail` actually sends mail — Supabase's default SMTP has a low daily cap,
+  and whether it's been swapped for a real provider isn't visible from the repo.
+- Whether GitHub Pages' origin (`https://michaelsivertsennorge.github.io/SafeWalk/`) is on the
+  project's allowed Redirect URLs list in Supabase Auth settings. If it isn't, Supabase silently
+  falls back to the configured Site URL instead of erroring, so this would look fine here and only
+  fail by sending someone to the wrong place — the exact silent-failure shape this project keeps
+  watching for. **Someone with dashboard access needs to check that list once.**
+- Whether `PASSWORD_RECOVERY` still fires under this exact supabase-js version (2.45.4) and whether
+  a stale recovery link (token already used or expired) produces a message someone can act on, or
+  just a generic Supabase error string.
 
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the

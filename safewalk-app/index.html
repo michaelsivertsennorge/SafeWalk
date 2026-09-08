@@ -386,9 +386,24 @@
     <input id="authPassword" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password (min. 6 characters)" />
     <p class="sheet-sub" id="authStatus" aria-live="polite"></p>
     <button class="btn btn-primary btn-block" id="authSubmitBtn">Sign in</button>
+    <button class="btn btn-ghost btn-block" id="forgotPasswordBtn" type="button">Forgot password?</button>
     <button class="btn btn-ghost btn-block" id="authToggleModeBtn">New here? Create an account</button>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Reached only via the link in a password-reset email; not linked from anywhere else in the app -->
+  <section class="sheet" id="recoverySheet" role="dialog" aria-modal="true" aria-labelledby="recoverySheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="recoverySheetTitle">Set a new password</h2>
+    <p class="sheet-sub">You opened a password reset link. Choose a new password to finish.</p>
+    <input id="recoveryNewPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
+    <input id="recoveryConfirmPassword" type="password" autocomplete="new-password" aria-label="Confirm new password" placeholder="Confirm new password" />
+    <p class="sheet-sub" id="recoveryStatus" aria-live="polite"></p>
+    <button class="btn btn-primary btn-block" id="recoverySaveBtn">Save new password</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Not now</button>
     </div>
   </section>
 
