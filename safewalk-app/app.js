@@ -2962,14 +2962,31 @@ async function refreshPinsFromCloud({ force = false } = {}) {
     return;
   }
 
+  // `own` and `votes` used to be trusted unchecked: `own.data || []` and `votes.data || []` treat a
+  // failed request exactly like a true empty answer. A transient failure in `own` silently dropped
+  // whatever of your own reports sat outside this fetch's radius from "My reports & marks"; one in
+  // `votes` made every already-rated pin look unrated, inviting a re-vote the database would then
+  // reject as a duplicate. Neither ever printed a warning, so there was nothing to notice.
+  if (own.error) console.warn('SafeWalk: could not refresh "My reports & marks":', own.error.message);
+  if (votes.error) console.warn('SafeWalk: could not refresh your vote history:', votes.error.message);
+
   hideStaleBanner();
   lastPinFetchAt = centre;
-  const votedIds = new Set((votes.data || []).map((v) => v.pin_id));
+  const votedIds = votes.error
+    ? new Set(pins.filter((p) => (p.voters || []).includes(currentVoterId())).map((p) => p.id))
+    : new Set((votes.data || []).map((v) => v.pin_id));
   const byId = new Map();
-  [...(nearby.data || []), ...(own.data || [])].forEach((r) => byId.set(r.id, r));
+  [...(nearby.data || []), ...(own.error ? [] : (own.data || []))].forEach((r) => byId.set(r.id, r));
   const rows = [...byId.values()];
-  pins = rows.map((r) => rowToPin(r, votedIds));
-  cachePins(rows);
+  let newPins = rows.map((r) => rowToPin(r, votedIds));
+  if (own.error) {
+    // Keep whichever of our own reports we already knew about rather than letting a failed request
+    // make them vanish from "My reports & marks" until the next successful refresh.
+    const known = new Set(newPins.map((p) => p.id));
+    newPins = newPins.concat(pins.filter((p) => p.own && !known.has(p.id)));
+  }
+  pins = newPins;
+  if (!own.error) cachePins(rows); // an incomplete fetch shouldn't overwrite a complete cached one
   renderPins();
   renderMyReports();
 }

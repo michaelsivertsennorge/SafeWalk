@@ -90,6 +90,30 @@ Still open here:
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 
+### A fourth silent failure — `own` and `votes` errors in the pin fetch, fixed 2026-09-08
+`refreshPinsFromCloud` fetches three things in parallel: nearby pins, your own out-of-radius pins
+(`own`), and which pins you've already voted on (`votes`). Only `nearby.error` was ever checked;
+`own.data || []` and `votes.data || []` treated a failed request exactly like a true empty answer,
+with no warning logged either way. In practice that meant:
+- A transient `own` failure silently dropped whatever of your own reports sat outside the 5km fetch
+  radius from "My reports & marks" — the room just added on 2026-09-08 — until the next successful
+  refresh happened to include them again.
+- A transient `votes` failure made every already-rated pin look unrated to you, inviting a re-vote
+  that the database would then reject as a duplicate ("You've already rated this spot") — confusing,
+  and only surfaced after the fact rather than explaining why.
+
+Both are now checked, logged with `console.warn`, and handled without losing state: an `own` failure
+keeps whichever of your own reports the previous fetch already had instead of dropping them, a
+`votes` failure falls back to the vote state already reflected in the pins on screen, and the local
+read cache is only overwritten when the fetch that produced it was actually complete.
+
+**Not verified: any of it running against the live database.** This needed inducing a real Supabase
+error mid-fetch to watch the fallback path take over, which this environment has no credentials for.
+`node tests/geo.test.js` (72 assertions) still passes and all four client files still parse — neither
+exercises this function, since it talks to `sb`. Worth doing once against a throwaway project by
+forcing `own` or `votes` to fail (e.g. a bad RLS policy) and confirming "My reports & marks" and the
+already-voted state survive it.
+
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
