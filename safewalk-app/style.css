@@ -1338,3 +1338,19 @@ a:focus-visible {
   margin-top: 8px;
   font-size: 13.5px;
 }
+
+/* Report and Finish share the bottom row of the walk bar. Finish is the wider of the two: it is
+   pressed on every walk, Report only when something has happened. */
+.walk-footer { display: flex; gap: 10px; }
+.walk-report {
+  flex: 0 0 38%;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--danger-strong);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.walk-footer .walk-finish { flex: 1; }

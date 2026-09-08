@@ -1655,6 +1655,37 @@ async function reverseGeocode(lat, lng) {
 
 // ---------- Pin-on-map start/end picking ----------
 const routePins = { from: null, to: null }; // { lat, lng, label } | null
+
+// The route sheet shows one step at a time. It used to show all of them at once — search form,
+// three route cards, both start buttons and the after-the-walk feedback — which filled most of a
+// phone with things that were irrelevant at that moment, and covered the map with the sheet exactly
+// when someone was trying to compare three lines drawn on that map.
+//
+//   plan     where to
+//   choose   the routes are on the map; this stays short so they can be seen
+//   ready    one is chosen: start walking, or send a watch link
+//   feedback only after a walk is finished — asking how a route felt while somebody is still
+//            standing at the start of it was always the wrong moment to ask
+function setRouteStep(step) {
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.hidden = !on; };
+  show('routePlanBlock',   step === 'plan');
+  show('routeResults',     step === 'choose' || step === 'ready');
+  show('routeChosenBlock', step === 'ready');
+  show('routeChangeBtn',   step === 'ready');
+  show('routeNewSearchBtn', step === 'choose' || step === 'ready');
+  show('routeFeedback',    step === 'feedback');
+  show('routeStatus',      step !== 'feedback');
+  document.getElementById('routeSheetTitle').textContent =
+    step === 'feedback' ? 'How was that walk?'
+    : step === 'ready'  ? 'Ready to go'
+    : step === 'choose' ? 'Pick a route'
+    : 'Find the safest route';
+  // Only the chosen route stays listed once one is picked; the alternatives are still drawn on the
+  // map, so nothing is lost by taking them out of the sheet.
+  document.querySelectorAll('#routeResults .route-card').forEach((card) => {
+    card.hidden = step === 'ready' && !card.classList.contains('selected');
+  });
+}
 let pickingSide = null; // 'from' | 'to' | null
 let startMarker = null;
 let endMarker = null;
@@ -1791,6 +1822,9 @@ document.querySelectorAll('#modeToggle .mode-btn').forEach((btn) => {
 document.getElementById('routeBtn').addEventListener('click', () => {
   setPickButtonState('from');
   setPickButtonState('to');
+  // Reopening mid-plan should come back to where you were, not throw the search away — but with no
+  // route in play it starts at the beginning.
+  if (!activeRouteCoords) setRouteStep('plan');
   openSheet('routeSheet');
 });
 
@@ -1865,6 +1899,10 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
   const skippedNote = skippedAlreadyVoted ? ` (${skippedAlreadyVoted} spot${skippedAlreadyVoted === 1 ? '' : 's'} skipped — already rated by you)` : '';
   showToast(`Thanks — added to ${affected} street rating${affected === 1 ? '' : 's'} along that route${skippedNote}.`);
   buzz();
+  // Answered, so the walk is over: close rather than leaving a spent form on screen.
+  closeSheets();
+  activeRouteCoords = null;
+  setRouteStep('plan');
 });
 
 document.getElementById('findRouteBtn').addEventListener('click', async () => {
@@ -1874,10 +1912,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
   routeLayer.clearLayers();
   setLoadingStatus(status, 'Locating your route…');
   activeRouteCoords = null;
-  routeFeedbackEl.hidden = true;
-  document.getElementById("startWalkBtn").hidden = true;
-  document.getElementById("startWatchedWalkBtn").hidden = true;
-  document.getElementById("startWatchedHint").hidden = true;
+  setRouteStep('plan');
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
@@ -2035,11 +2070,9 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
         e.statusLabel.textContent = active ? 'Showing on map ✓' : 'Tap to show this route on the map';
       });
       activeRouteCoords = entries[rank].coords;
-      routeFeedbackEl.hidden = false;
-      // Offered only once a route is on the map, because walk mode has nothing to follow without one.
-      document.getElementById("startWalkBtn").hidden = false;
-      document.getElementById("startWatchedWalkBtn").hidden = false;
-      document.getElementById("startWatchedHint").hidden = false;
+      // Choosing a route moves the flow on rather than piling the next options on top of the old
+      // ones. Feedback is NOT offered here any more — that belongs after the walk.
+      setRouteStep('ready');
       if (fitView) {
         if (!keepSheetOpen) closeSheets();
         map.fitBounds(entries[rank].poly.getBounds(), { padding: [40, 40] });
@@ -2051,7 +2084,13 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       e.poly.on('click', () => selectRoute(e.rank, { keepSheetOpen: true }));
     });
 
-    if (entries.length) selectRoute(0, { fitView: true, keepSheetOpen: true });
+    // The first route is drawn as the active one so the map is not ambiguous, but the flow stops
+    // here: choosing is the person's job, and auto-advancing to "ready" would skip the step they
+    // asked for. selectRoute moves to 'ready', so this puts it back.
+    if (entries.length) {
+      selectRoute(0, { fitView: true, keepSheetOpen: true });
+      setRouteStep('choose');
+    }
   } catch (err) {
     status.textContent = typeof err.message === 'string' && err.message
       ? err.message
@@ -3559,13 +3598,15 @@ function finishWalk({ silent = false } = {}) {
   walkBarEl().hidden = true;
   document.querySelector('.bottom-bar').hidden = false;
   if (silent) return;
-  // Most people will not have touched the phone at all on the way. The whole-route verdict is the
-  // one question that still catches them, so land on it rather than on the map.
+  // The one question worth asking, asked at the only moment it can be answered honestly: after the
+  // walk. Most people will not have touched the phone on the way, so this is what catches them —
+  // and the sheet now contains nothing else, because a route planner is not what somebody who has
+  // just got home is looking at.
+  setRouteStep('feedback');
   openSheet('routeSheet');
-  document.getElementById('routeFeedback').scrollIntoView({ block: 'center' });
   showToast(marked
-    ? `Walk finished — ${marked} stretch${marked === 1 ? '' : 'es'} marked. How was the route overall?`
-    : 'Walk finished. How was the route overall?');
+    ? `Walk finished — ${marked} stretch${marked === 1 ? '' : 'es'} marked.`
+    : 'Walk finished.');
 }
 
 // Writes the pending mark for real. Called by the undo timer, by anything that supersedes it, and
@@ -4193,6 +4234,24 @@ function refugeKindOf(tags) {
 // same hazard-aware ranking as any other walk — which matters here more than anywhere: being sent
 // towards a police cordon while trying to get away from something would be the worst possible bug
 // in this feature.
+// Back a step, without throwing away the search.
+document.getElementById('routeChangeBtn').addEventListener('click', () => setRouteStep('choose'));
+document.getElementById('routeNewSearchBtn').addEventListener('click', () => {
+  routeLayer.clearLayers();
+  activeRouteCoords = null;
+  document.getElementById('routeResults').innerHTML = '';
+  document.getElementById('routeStatus').textContent = '';
+  setRouteStep('plan');
+});
+
+// Reporting mid-walk. No map to aim at — it takes where you are standing, which is the only
+// position that makes sense while walking and the only one anyone could give one-handed.
+document.getElementById('walkReportBtn').addEventListener('click', () => {
+  if (!userLocation) { showToast('Waiting for your location — try again in a moment.'); return; }
+  pendingPoint = { lat: userLocation.lat, lng: userLocation.lng };
+  document.getElementById('openIncidentBtn').click();
+});
+
 function routeToRefuge(p) {
   routePins.from = null;                       // null means "from where I am now"
   routePins.to = { lat: p.lat, lng: p.lng, label: p.name };

@@ -81,7 +81,13 @@
       <button class="walk-btn walk-fine" id="walkFineBtn">Felt fine</button>
       <button class="walk-btn walk-off" id="walkOffBtn">Felt off</button>
     </div>
-    <button class="walk-finish" id="walkFinishBtn">Finish walk</button>
+    <!-- Reporting something has to be reachable mid-walk, not only by tapping the map afterwards —
+         the moment you most need it is the moment you are least able to aim at a map. It takes the
+         position you are standing at, so there is nothing to point at. -->
+    <div class="walk-footer">
+      <button class="walk-report" id="walkReportBtn">⚠️ Report</button>
+      <button class="walk-finish" id="walkFinishBtn">Finish walk</button>
+    </div>
   </div>
 
   <nav class="bottom-bar">
@@ -232,41 +238,56 @@
   </section>
 
   <!-- Safe route planner -->
+  <!-- One thing at a time. This used to be a single sheet holding the search form, three route
+       cards, both start buttons and the after-the-walk feedback all at once — most of a phone
+       screen, most of it irrelevant at any given moment, and the map hidden behind it exactly when
+       someone is trying to compare three lines drawn on that map.
+       Four steps now: plan, choose, ready, and feedback that only exists once a walk is finished. -->
   <section class="sheet" id="routeSheet" role="dialog" aria-modal="true" aria-labelledby="routeSheetTitle" tabindex="-1" hidden>
     <div class="sheet-handle"></div>
     <h2 id="routeSheetTitle">Find the safest route</h2>
-    <p class="sheet-sub">Type an address, or tap 📍 to drop a pin on the map instead.</p>
-    <div class="mode-toggle" id="modeToggle">
-      <button type="button" class="mode-btn selected" data-mode="pedestrian">🚶 Walking</button>
-      <button type="button" class="mode-btn" data-mode="bicycle">🚴 Biking</button>
+
+    <!-- Step 1: where to. -->
+    <div id="routePlanBlock">
+      <p class="sheet-sub">Type an address, or tap 📍 to drop a pin on the map instead.</p>
+      <div class="mode-toggle" id="modeToggle">
+        <button type="button" class="mode-btn selected" data-mode="pedestrian">🚶 Walking</button>
+        <button type="button" class="mode-btn" data-mode="bicycle">🚴 Biking</button>
+      </div>
+      <label class="field-label" for="routeFrom">From</label>
+      <div class="field-row">
+        <input id="routeFrom" type="text" placeholder="My current location" autocomplete="off" name="safewalk-from" />
+        <button type="button" class="pin-btn" id="pinFromBtn" aria-label="Pick start point on map" title="Pick start on map">📍</button>
+      </div>
+      <label class="field-label" for="routeTo">To</label>
+      <div class="field-row">
+        <input id="routeTo" type="text" placeholder="Enter an address or place" autocomplete="off" name="safewalk-to" />
+        <button type="button" class="pin-btn" id="pinToBtn" aria-label="Pick destination on map" title="Pick destination on map">📍</button>
+      </div>
+      <button class="btn btn-primary btn-block" id="findRouteBtn">Find safest route</button>
     </div>
-    <label class="field-label" for="routeFrom">From</label>
-    <div class="field-row">
-      <input id="routeFrom" type="text" placeholder="My current location" autocomplete="off" name="safewalk-from" />
-      <button type="button" class="pin-btn" id="pinFromBtn" aria-label="Pick start point on map" title="Pick start on map">📍</button>
-    </div>
-    <label class="field-label" for="routeTo">To</label>
-    <div class="field-row">
-      <input id="routeTo" type="text" placeholder="Enter an address or place" autocomplete="off" name="safewalk-to" />
-      <button type="button" class="pin-btn" id="pinToBtn" aria-label="Pick destination on map" title="Pick destination on map">📍</button>
-    </div>
-    <button class="btn btn-primary btn-block" id="findRouteBtn">Find safest route</button>
+
     <div id="routeStatus" class="route-status" aria-live="polite"></div>
-    <!-- Above the list of routes, not below it. These used to sit under the results, which put them
-         121px past the bottom of the sheet on a 375px phone: present, wired up, and unreachable
-         without knowing to scroll past three route cards. The first route is selected already, so
-         the next thing anyone wants is to start walking it; choosing a different one is the rarer
-         case and belongs underneath. -->
-    <button class="btn btn-primary btn-block" id="startWalkBtn" hidden>🚶 Start walking this route</button>
-    <!-- "Walk with someone watching" read as though it would connect you to a person you pick, and
-         the owner asked who it connects to and how. It makes a link. Say that on the button. -->
-    <button class="btn btn-secondary btn-block" id="startWatchedWalkBtn" hidden>👁 Send someone a link to follow me</button>
-    <p class="sheet-sub route-watch-hint" id="startWatchedHint" hidden>They get a page showing where
-      you are and when you arrive. No account, nothing to install — send it however you normally
-      text them. Needs you to be signed in, so the walk belongs to you.</p>
+
+    <!-- Step 2: the routes are drawn on the map, so this stays deliberately short. -->
     <div id="routeResults" class="route-results"></div>
+
+    <!-- Step 3: only once one is chosen. -->
+    <div id="routeChosenBlock" hidden>
+      <button class="btn btn-primary btn-block" id="startWalkBtn">🚶 Start walking this route</button>
+      <button class="btn btn-secondary btn-block" id="startWatchedWalkBtn">👁 Send someone a link to follow me</button>
+      <p class="sheet-sub route-watch-hint" id="startWatchedHint">They get a page showing where you
+        are and when you arrive. No account, nothing to install — send it however you normally text
+        them. Needs you to be signed in, so the walk belongs to you.</p>
+    </div>
+
+    <button class="btn btn-ghost btn-block" id="routeChangeBtn" hidden>Pick a different route</button>
+    <button class="btn btn-ghost btn-block" id="routeNewSearchBtn" hidden>New search</button>
+
+    <!-- Step 4: reached only by finishing a walk. Asking how a route felt while somebody is still
+         standing at the start of it was always the wrong moment to ask. -->
     <div class="route-feedback" id="routeFeedback" hidden>
-      <p class="sheet-label">Actually walked or biked this route? Tell us how the selected one felt</p>
+      <p class="sheet-label">How did that walk feel?</p>
       <div class="rating-choice">
         <button class="rate-btn rate-safe" data-route-rating="safe">
           <span class="rate-icon">🟢</span>Felt Safe
@@ -278,6 +299,7 @@
       <textarea id="routeFeedbackNote" maxlength="140" aria-label="Optional note about this route" placeholder="Optional note (140 chars)"></textarea>
       <button class="btn btn-primary btn-block" id="submitRouteFeedback" disabled>Submit route feedback</button>
     </div>
+
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>
