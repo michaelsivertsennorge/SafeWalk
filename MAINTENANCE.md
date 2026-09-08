@@ -8,6 +8,27 @@ rather than in the routine, so the reasoning stays next to the code.
 SafeWalk is live and used by real people walking home at night. **A confident wrong claim about a
 street is worse than a missing feature.** Everything below follows from that.
 
+## Before you pick anything: find out what already exists
+
+You have no memory of previous runs, and previous runs were you. On 2026-09-08 that produced eleven
+pull requests in eleven hours, five of them the same police-layer fix and three of them the same
+forgot-password flow, because every run read the same roadmap, picked the same top item, and never
+looked at what was already proposed. One run diagnosed the problem and opened a PR about it — which
+was, of course, the twelfth PR.
+
+So, first, every run, before choosing anything:
+
+```bash
+gh pr list --state open --limit 30        # what is already proposed
+git log --oneline -25                     # what already landed on main
+```
+
+If an open PR already covers the item you were about to pick, **do not open another**. Either
+improve that branch, or pick a different item. If main already contains the fix, the roadmap is
+stale — say so and update it, which is a full item in its own right. And check the item is still
+real in the code in front of you before you write a line: `ROADMAP.md` describes the day it was
+written, not necessarily today.
+
 ## What to do in one run
 
 Read `ROADMAP.md` and `README.md` in full first. `ROADMAP.md` is the memory between runs: what is

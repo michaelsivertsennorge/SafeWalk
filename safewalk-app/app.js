@@ -479,13 +479,35 @@ map.on('moveend', loadLighting);
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 
+// How often the client re-asks. Not only for freshness: this ran exactly once, at page load, so a
+// single dropped connection meant no police layer AND no proximity warning for as long as the app
+// stayed open — and a walk home is exactly when the app has been open for a while.
+const POLICE_REFRESH_MS = 5 * 60 * 1000;
+
+// The layer's own line in the map key, and the fifth instance in this project of the same bug: a
+// failure that is indistinguishable from good news. "No police reports near you" and "we could not
+// find out whether there are any" looked identical — both were a map with no red on it — and the
+// second one is the reassuring reading of the two, which is the wrong way for a safety app to fail.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Police reports — checking…',
+    ok: `Police report (recent)${count ? ` — ${count} here` : ''}`,
+    none: 'Police reports — none active nearby',
+    failed: 'Police reports — could not be loaded',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadPoliceEvents() {
-  if (!sb) return;   // the pins path reports this; one banner is enough
+  if (!sb) { setPoliceLegend('failed'); return; }   // the pins path reports this; one banner is enough
+  setPoliceLegend('loading');
   const { data, error } = await sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) { setPoliceLegend('failed'); return; }
 
   policeEvents = data
     .map((r) => {
@@ -493,6 +515,7 @@ async function loadPoliceEvents() {
       return p ? { ...r, lat: p.lat, lng: p.lng } : null;
     })
     .filter(Boolean);
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
   renderPoliceEvents();
   checkPoliceProximity();
 }
@@ -3313,6 +3336,9 @@ renderPins();
 locate(true);
 loadLighting();
 loadPoliceEvents();
+// One fetch at startup used to be the whole story: a dropped connection meant no police layer and
+// no proximity warning until the app was reopened, which on a walk home may be never.
+setInterval(loadPoliceEvents, POLICE_REFRESH_MS);
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
 // Captured before the Supabase client was built; said out loud here, once the app is on screen.

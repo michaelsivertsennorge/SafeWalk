@@ -151,6 +151,20 @@ Still open here:
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
   `backend/functions/politiloggen-sync/README.md` for what it decides and why.
+
+  **The layer no longer fails silently — fixed 2026-09-08.** `loadPoliceEvents` ran once, at page
+  load, and its failure path was `if (error || !Array.isArray(data)) return;` — no log, no legend,
+  no retry. So a dropped connection meant no police layer *and* no proximity warning for as long as
+  the app stayed open, which on a walk home may be until morning. Worse, it failed towards
+  reassurance: "no police reports near you" and "we could not find out" were the same screen, a map
+  with no red on it, and the comforting reading was the wrong one. The map key now distinguishes
+  checking / none active / could not be loaded, and the layer re-fetches every five minutes.
+  Verified by simulating an outage in the browser and watching the key change, not by reading it.
+
+  This was the single most-reported item in the project's history: the hourly agent opened five
+  separate PRs for it (#3, #4, #6, #10, #12) because none of them ever merged and every fresh run
+  found it again. It is fixed on main now, so the roadmap and the code finally agree.
+
   Still open here:
   - **Street extraction now works — it never had before.** The regex was built with a template
     literal where `\b` is the backspace character rather than a word boundary, so the pattern
