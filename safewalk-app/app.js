@@ -1917,7 +1917,11 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     const scored = trips.map((trip) => {
       const coords = trip.legs.flatMap((leg) => decodePolyline(leg.shape, 6));
       const distanceKm = trip.summary.length;
-      return { coords, distanceKm, durationSec: trip.summary.time, ...routeSafetyScore(coords, distanceKm, pins) };
+      // Ratings AND events. Until this passed hazards, "find the safest route" ignored both the
+      // police layer and every user incident report — the two freshest and most serious things the
+      // app knows — so a route through a live cordon ranked identically to one avoiding it.
+      return { coords, distanceKm, durationSec: trip.summary.time,
+               ...routeSafetyScore(coords, distanceKm, pins, routeHazardList()) };
     });
     scored.sort((a, b) => b.score - a.score);
 
@@ -1928,6 +1932,8 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     const best = scored[0];
     const claim = routeRankingClaim(scored);
     const haveEvidence = claim.haveEvidence;
+    const hazardOnBest = claim.kind === 'hazardOnRoute';
+    const avoidsHazard = claim.kind === 'avoidsHazard';
     const topIsVouchedFor = claim.kind === 'safest';
     const topAvoidsWarnings = claim.kind === 'avoids';
     const topIsLeastBad = claim.kind === 'leastBad';
@@ -1936,7 +1942,16 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     if (!haveEvidence) scored.sort((a, b) => a.distanceKm - b.distanceKm);
 
     const flagged = scored.reduce((n, r) => n + (r.dangerPins ? 1 : 0), 0);
-    status.textContent = topIsVouchedFor
+    // Events first, and worded so nobody mistakes a stranger's report for a police one. A hazard
+    // still on the recommended route is the one thing that must be said before anything else,
+    // because every other sentence here is a reassurance by comparison.
+    status.textContent = hazardOnBest
+      ? (claim.isUnavoidable
+          ? `Every route passes something reported recently. ${hazardSentence(claim.worstHazard)} There is no way round it from here.`
+          : `${hazardSentence(claim.worstHazard)} It is on the recommended route — check the others below.`)
+      : avoidsHazard
+        ? 'Ranked to go around something reported recently. Tap the ⚠ marks to see what.'
+      : topIsVouchedFor
       ? `${scored.length} route${scored.length > 1 ? 's' : ''} compared using ${pins.length} community report${pins.length === 1 ? '' : 's'}.`
       : topAvoidsWarnings
         ? `Ranked to avoid ${flagged} route${flagged === 1 ? '' : 's'} with reports of trouble. Nobody has rated the recommended one yet.`
@@ -4329,6 +4344,9 @@ function renderIncidents() {
 document.getElementById('openIncidentBtn').addEventListener('click', () => {
   if (!pendingPoint) { showToast('Tap the map where it happened first.'); return; }
   pendingIncidentKind = null;
+  // If a previous attempt threw, the in-flight flag and the disabled button would otherwise stay
+  // stuck for the rest of the session — a guard that locks people out is its own bug.
+  incidentSubmitInFlight = false;
   document.querySelectorAll('#incidentKinds .incident-kind').forEach((b) => b.classList.remove('selected'));
   document.getElementById('incidentStatus').textContent = '';
   document.getElementById('submitIncident').disabled = true;
@@ -4346,12 +4364,23 @@ document.querySelectorAll('#incidentKinds .incident-kind').forEach((btn) => {
   });
 });
 
+// One press must never become several reports. Found in production data rather than by reading the
+// code: twelve identical assault reports at one coordinate, 400ms apart, from a single attempt.
+// Nothing stopped the button firing again while the first insert was still in flight, and for this
+// app that is not a duplicate row — it is twelve public accusations about a real address.
+let incidentSubmitInFlight = false;
+
 document.getElementById('submitIncident').addEventListener('click', guarded('incidentStatus', async () => {
   const statusEl = document.getElementById('incidentStatus');
+  if (incidentSubmitInFlight) return;
   if (!pendingIncidentKind || !pendingPoint) return;
   if (!requireAccount('to report something that happened')) return;
   if (!sb) { statusEl.textContent = 'You need a connection to report an incident.'; return; }
 
+  // Belt and braces: the flag stops a second handler run, disabling stops the tap reaching it at
+  // all. Both, because the flag alone still leaves a button that looks pressable and is not.
+  incidentSubmitInFlight = true;
+  document.getElementById('submitIncident').disabled = true;
   setLoadingStatus(statusEl, 'Reporting…');
   // What, where and when — there is no free-text field, deliberately. See migration 022.
   const { error } = await settled(sb.from('incidents').insert({
@@ -4361,7 +4390,12 @@ document.getElementById('submitIncident').addEventListener('click', guarded('inc
     lng: pendingPoint.lng,
   }), 'report that');
 
+  incidentSubmitInFlight = false;
+
   if (error) {
+    // Only on failure does the button come back — on success the sheet closes, and re-enabling it
+    // first would offer a second press for a report that has already been filed.
+    document.getElementById('submitIncident').disabled = false;
     // The cooldown is enforced by row-level security, so a suspended account gets a bare policy
     // violation. Translate it rather than leaving somebody staring at Postgres.
     statusEl.textContent = /row-level security|policy/i.test(error.message || '')
@@ -4439,6 +4473,39 @@ document.getElementById('incidentDeleteBtn').addEventListener('click', async () 
   showToast('Report deleted.');
   loadIncidents();
 });
+
+// Everything the route ranker treats as an event rather than an opinion: the police layer and user
+// incident reports, in the shape geo.js expects. Police areas carry their own radius; a user report
+// is a point and gets the default reach.
+function routeHazardList() {
+  const list = [];
+  policeEvents.forEach((e) => {
+    if (e.lat == null || e.lng == null) return;
+    list.push({
+      id: 'police-' + e.id, kind: 'police', lat: e.lat, lng: e.lng,
+      radiusM: e.radius_m || 0,
+      at: e.occurred_at ? new Date(e.occurred_at).getTime() : Date.now(),
+    });
+  });
+  incidents.forEach((i) => {
+    list.push({
+      id: 'incident-' + i.id, kind: 'incident', lat: i.lat, lng: i.lng,
+      confirmed: i.confirmed, disputed: i.disputed,
+      at: i.occurred_at ? new Date(i.occurred_at).getTime() : Date.now(),
+    });
+  });
+  return list;
+}
+
+// One sentence naming what was found, kept vague about severity and precise about source — a user
+// report and a police report must never read alike.
+function hazardSentence(h) {
+  if (!h) return 'Something was reported near this route.';
+  const when = h.at ? describeAge(Date.now() - h.at) : 'recently';
+  return h.kind === 'police'
+    ? `Police reported something here ${when}.`
+    : `Someone using SafeWalk reported something here ${when}.`;
+}
 
 // ---------- Init ----------
 renderAccountState();

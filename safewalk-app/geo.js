@@ -284,7 +284,75 @@ function pickReadableInk(bg) {
 // `coverage` reports how much of the route anyone has actually said anything about, so the UI can
 // tell "reported safe" apart from "nobody knows".
 // `allPins` is passed in rather than read from a global so this can be tested without a browser.
-function routeSafetyScore(coords, distanceKm, allPins) {
+
+// ---------- Hazards on a route ----------
+// Ratings are opinions about a place. A police report and a user incident report are EVENTS, and
+// until now the safest-route ranking ignored both — so a route past last night's assault, or
+// through a live police cordon, scored exactly like one that avoided them. That is the app's
+// headline promise quietly not being kept.
+//
+// They are weighed separately from ratings rather than averaged in, because they answer a different
+// question: not "how does this street feel" but "did something happen here, and how recently".
+//
+// How much a single hazard should count. Recency dominates: an assault two hours ago is a warning,
+// the same assault six days ago is history, and treating them alike would be wrong in both
+// directions. Halves every 36 hours and floors at 0.2, so a week-old report still counts for
+// something rather than snapping to nothing on an arbitrary boundary.
+function hazardWeight(hazard, now = Date.now()) {
+  if (!hazard) return 0;
+  const ageMs = typeof hazard.ageMs === 'number'
+    ? hazard.ageMs
+    : (hazard.at ? now - hazard.at : 0);
+  const hours = Math.max(0, ageMs) / 3600000;
+  const recency = Math.max(0.2, Math.pow(0.5, hours / 36));
+
+  // The police did not guess, and the sync already drops anything expired. No trust adjustment.
+  if (hazard.kind === 'police') return recency;
+
+  const net = (Number(hazard.confirmed) || 0) - (Number(hazard.disputed) || 0);
+  // Unconfirmed is still worth most of its weight: the overwhelming majority of true reports are
+  // never confirmed by a passing stranger, and treating silence as doubt would mute exactly the
+  // fresh warnings this is for. Disputes reduce it rather than erase it — erasing is what the
+  // dispute threshold does at the source, before this ever sees the report.
+  const trust = Math.min(1.4, Math.max(0.4, 1 + net * 0.2));
+  return recency * trust * 0.8;
+}
+
+// Subtracted from a route's score per hazard passed, per kilometre. Large enough that one fresh,
+// confirmed hazard outranks a street's worth of mild reassurance — which is the intended bias:
+// being wrong about a danger costs more than being wrong about a quiet street.
+const HAZARD_PENALTY = 1.5;
+
+// Every hazard the route passes within its own radius, counted once each however many sample
+// points fall inside it.
+function routeHazards(coords, hazards, now = Date.now()) {
+  if (!Array.isArray(coords) || !coords.length || !Array.isArray(hazards) || !hazards.length) {
+    return { penalty: 0, hazardsNearby: 0, worst: null };
+  }
+  const seen = new Set();
+  let penalty = 0;
+  let worst = null;
+
+  const sampleEvery = Math.max(1, Math.floor(coords.length / 40));
+  for (let i = 0; i < coords.length; i += sampleEvery) {
+    const [lat, lng] = coords[i];
+    for (const h of hazards) {
+      const id = h.id != null ? h.id : `${h.lat},${h.lng},${h.kind}`;
+      if (seen.has(id)) continue;
+      // A police report describes an area; a user report describes a point. Both get a floor, so a
+      // hazard recorded a few metres off the pavement still counts for a route along it.
+      const reach = Math.max(80, Number(h.radiusM) || 0);
+      if (haversine(lat, lng, h.lat, h.lng) > reach) continue;
+      seen.add(id);
+      const w = hazardWeight(h, now);
+      penalty += w;
+      if (!worst || w > worst.weight) worst = { ...h, weight: w };
+    }
+  }
+  return { penalty: penalty * HAZARD_PENALTY, hazardsNearby: seen.size, worst };
+}
+
+function routeSafetyScore(coords, distanceKm, allPins, hazards = [], now = Date.now()) {
   const nearbyPins = new Set();
   let score = 0;
   let safePins = 0;
@@ -319,12 +387,36 @@ function routeSafetyScore(coords, distanceKm, allPins) {
     if (anyHere) sampledWithData++;
   }
 
+  // Events, weighed separately from opinions and subtracted after the per-kilometre normalisation
+  // of the ratings — a hazard is a fact about a place, not a quality of the route, so walking
+  // further does not dilute it.
+  const haz = routeHazards(coords, hazards, now);
+
+  // Per kilometre so length cannot inflate it — and then bounded, which matters more than it looks.
+  // The raw sum is unbounded: six well-rated pins on a 400m route scored 7.5, and dividing by a
+  // short distance multiplies it further. That made two things wrong. A hazard penalty of 1.5 was
+  // drowned out on exactly the short, densely-rated city routes people actually walk, so a live
+  // police cordon barely moved the ranking. And the 0.15 "the scores actually differ" threshold in
+  // routeRankingClaim became meaningless against numbers that size.
+  //
+  // Reassurance saturates: twenty people saying a street is fine is not twice as reassuring as ten.
+  //
+  // Squashed rather than clamped, and that distinction was found by two existing tests failing. A
+  // hard cut at ±2 made every well-rated route score exactly 2, which silently destroyed two
+  // properties this file already guaranteed: that three corroborating pins beat one loud one, and
+  // that a warning moves the score further than an equal reassurance. tanh is strictly increasing,
+  // so every one of those orderings survives — it only compresses the far end of the scale, which
+  // is the part that was never meaningful anyway.
+  const rated = 2 * Math.tanh(score / Math.max(0.2, distanceKm || 0.2) / 2);
+
   return {
-    score: score / Math.max(0.2, distanceKm || 0.2), // per kilometre, so length can't inflate it
+    score: rated - haz.penalty,
     pinsNearby: nearbyPins.size,
     coverage: sampled ? sampledWithData / sampled : 0,
     safePins,
     dangerPins,
+    hazardsNearby: haz.hazardsNearby,
+    worstHazard: haz.worst,
   };
 }
 
@@ -347,13 +439,31 @@ function routeRankingClaim(scored) {
   if (!Array.isArray(scored) || !scored.length) return { kind: 'shortest', haveEvidence: false };
   const best = scored[0];
   const worst = scored[scored.length - 1];
-  const anyReports = scored.some((r) => r.pinsNearby > 0);
+  const anyReports = scored.some((r) => r.pinsNearby > 0 || (r.hazardsNearby || 0) > 0);
   // One route cannot be compared against anything, so any report on it counts as evidence. With
   // several, the scores must actually differ, or "safest" is just noise between equals.
   const spread = best.score - worst.score;
   const haveEvidence = anyReports && (scored.length === 1 || spread > 0.15);
 
   if (!haveEvidence) return { kind: 'shortest', haveEvidence: false };
+
+  // An event on the route outranks anything the ratings say. "Safest" over a police cordon or last
+  // night's assault would be the single most dangerous sentence this app could print, so it is not
+  // available as an answer while any route still passes one.
+  const hazardsOnBest = best.hazardsNearby || 0;
+  if (hazardsOnBest > 0) {
+    return {
+      kind: 'hazardOnRoute',
+      haveEvidence: true,
+      hazardsNearby: hazardsOnBest,
+      worstHazard: best.worstHazard || null,
+      // Worth saying only when it is true: sometimes every way round passes the same thing.
+      isUnavoidable: scored.every((r) => (r.hazardsNearby || 0) > 0),
+    };
+  }
+  if (scored.some((r) => (r.hazardsNearby || 0) > 0)) {
+    return { kind: 'avoidsHazard', haveEvidence: true };
+  }
   if (best.pinsNearby > 0 && best.score > 0) return { kind: 'safest', haveEvidence: true };
   if (!best.dangerPins) return { kind: 'avoids', haveEvidence: true };
   return {
@@ -702,6 +812,6 @@ if (typeof module !== 'undefined' && module.exports) {
     hexToRgb, relativeLuminance, contrastRatio, pickReadableInk, adjustForContrast,
     rgbToHsl, hslToHex, INK_DARK, INK_LIGHT,
     bearingDegrees, compassPoint, describeDistance, describeAge, COMPASS_POINTS, parsePointEwkb, parseWktLineStringZ,
-    routeProgress, trailingRouteSegment, pathMidpoint, isOpenNow,
+    routeProgress, trailingRouteSegment, pathMidpoint, isOpenNow, hazardWeight, routeHazards,
   };
 }

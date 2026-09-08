@@ -852,6 +852,146 @@ check('isOpenNow: a missing tag is unknown, not closed', () => {
   eq(geo.isOpenNow(undefined, at('Mo', '10:00')), null);
   eq(geo.isOpenNow(null, at('Mo', '10:00')), null);
 });
+
+// ---------------------------------------------------------------------------
+// Hazards on a route. Until these existed, "find the safest route" ignored both police reports and
+// user incident reports entirely — a route through a live cordon scored the same as one avoiding it.
+
+const HOUR = 3600000;
+// A straight line east, ~20m between vertices, ~400m long.
+const hazLine = Array.from({ length: 21 }, (_, i) => [59.9333, 10.75 + i * 0.00036]);
+
+check('hazardWeight: recency dominates', () => {
+  const fresh = geo.hazardWeight({ kind: 'police', ageMs: 0 });
+  const day   = geo.hazardWeight({ kind: 'police', ageMs: 24 * HOUR });
+  const week  = geo.hazardWeight({ kind: 'police', ageMs: 168 * HOUR });
+  eq(fresh > day && day > week, true, 'must decay with age');
+  near(fresh, 1, 0.01, 'a report from right now counts fully');
+  near(geo.hazardWeight({ kind: 'police', ageMs: 36 * HOUR }), 0.5, 0.02, 'halves at 36 hours');
+  eq(week >= 0.2, true, 'floored, so a week-old report does not snap to nothing');
+});
+
+check('hazardWeight: an unconfirmed user report still counts for most of its weight', () => {
+  // Most true reports are never confirmed by a passing stranger. Treating silence as doubt would
+  // mute exactly the fresh warnings this exists for.
+  const unconfirmed = geo.hazardWeight({ kind: 'incident', ageMs: 0, confirmed: 0, disputed: 0 });
+  near(unconfirmed, 0.8, 0.01);
+  eq(unconfirmed > 0.5, true);
+});
+
+check('hazardWeight: confirmations raise it, disputes lower it without erasing it', () => {
+  const base      = geo.hazardWeight({ kind: 'incident', ageMs: 0, confirmed: 0, disputed: 0 });
+  const confirmed = geo.hazardWeight({ kind: 'incident', ageMs: 0, confirmed: 2, disputed: 0 });
+  const disputed  = geo.hazardWeight({ kind: 'incident', ageMs: 0, confirmed: 0, disputed: 2 });
+  eq(confirmed > base, true);
+  eq(disputed < base, true);
+  eq(disputed > 0, true, 'disputes fade a report; removing it is the threshold’s job, not this');
+});
+
+check('hazardWeight: the police are not second-guessed', () => {
+  // No trust multiplier: the sync has already dropped anything expired, and nobody votes on these.
+  eq(geo.hazardWeight({ kind: 'police', ageMs: 0 }) > geo.hazardWeight({ kind: 'incident', ageMs: 0 }), true);
+});
+
+check('routeHazards: counts one passed hazard once, not once per sample point', () => {
+  // The sampler visits ~40 points; a hazard covering several of them is still one hazard.
+  const h = { id: 'h1', kind: 'incident', lat: 59.9333, lng: 10.7536, ageMs: 0 };
+  const r = geo.routeHazards(hazLine, [h]);
+  eq(r.hazardsNearby, 1);
+  eq(r.penalty > 0, true);
+});
+
+check('routeHazards: ignores hazards the route does not pass', () => {
+  const far = { id: 'far', kind: 'incident', lat: 59.99, lng: 10.99, ageMs: 0 };
+  eq(geo.routeHazards(hazLine, [far]).hazardsNearby, 0);
+  eq(geo.routeHazards(hazLine, [far]).penalty, 0);
+});
+
+check('routeHazards: a police area reaches as far as its radius says', () => {
+  // ~330m north of the line: outside the default reach, inside a 500m cordon.
+  const away = { id: 'p1', kind: 'police', lat: 59.9363, lng: 10.7536, ageMs: 0 };
+  eq(geo.routeHazards(hazLine, [{ ...away }]).hazardsNearby, 0, 'no radius: too far');
+  eq(geo.routeHazards(hazLine, [{ ...away, radiusM: 500 }]).hazardsNearby, 1, 'with its radius: on the route');
+});
+
+check('routeHazards: reports the worst one, for saying WHY a route was ranked down', () => {
+  const r = geo.routeHazards(hazLine, [
+    { id: 'old', kind: 'incident', lat: 59.9333, lng: 10.7522, ageMs: 150 * HOUR },
+    { id: 'new', kind: 'police',   lat: 59.9333, lng: 10.7550, ageMs: 0 },
+  ]);
+  eq(r.hazardsNearby, 2);
+  eq(r.worst.id, 'new');
+});
+
+check('routeSafetyScore: a hazard pushes a route below an identical one without it', () => {
+  const clean = geo.routeSafetyScore(hazLine, 0.4, [], []);
+  const hit = geo.routeSafetyScore(hazLine, 0.4, [], [
+    { id: 'h', kind: 'police', lat: 59.9333, lng: 10.7536, ageMs: 0 },
+  ]);
+  eq(hit.score < clean.score, true);
+  eq(hit.hazardsNearby, 1);
+  eq(clean.hazardsNearby, 0);
+});
+
+check('routeSafetyScore: the rating score is bounded, so a hazard cannot be drowned out', () => {
+  // Found by a failing test rather than by reading it. The raw per-km sum was unbounded — six good
+  // pins on a 400m route scored 7.5 — which made a 1.5 hazard penalty irrelevant on exactly the
+  // short, densely-rated city routes people actually walk. Reassurance saturates instead.
+  const many = hazLine.map(([lat, lng], i) => ({ id: 'm' + i, lat, lng, safe: 9, danger: 0 }));
+  const s = geo.routeSafetyScore(hazLine, 0.4, many, []);
+  eq(s.score <= 2, true, 'however many people call it fine, the scale stops at 2');
+  eq(s.score > 1.5, true, 'and it still sits clearly near the top of that scale');
+});
+
+check('routeSafetyScore: one fresh hazard outweighs a street of mild reassurance', () => {
+  // Being wrong about a danger costs more than being wrong about a quiet street, and the weighting
+  // has to actually express that or the ranking will not.
+  const pins = hazLine.filter((_, i) => i % 4 === 0).map(([lat, lng], i) => ({
+    id: 'p' + i, lat, lng, safe: 2, danger: 0,
+  }));
+  const reassured = geo.routeSafetyScore(hazLine, 0.4, pins, []);
+  const alsoHazard = geo.routeSafetyScore(hazLine, 0.4, pins, [
+    { id: 'h', kind: 'police', lat: 59.9333, lng: 10.7536, ageMs: 0 },
+  ]);
+  eq(reassured.score > 0, true, 'well-rated on its own');
+  eq(alsoHazard.score < reassured.score - 1, true, 'a live police report costs it more than a point');
+  // What a walker actually experiences is the ORDER, so assert that rather than the sign.
+  const ranked = [reassured, alsoHazard].sort((a, b) => b.score - a.score);
+  eq(ranked[0] === reassured, true, 'the clean route ranks first');
+});
+
+check('routeRankingClaim: never says "safest" about a route with a hazard on it', () => {
+  // The single most dangerous sentence this app could print.
+  const withHazard = { score: 0.9, pinsNearby: 5, safePins: 5, dangerPins: 0, hazardsNearby: 1,
+                       worstHazard: { kind: 'police' } };
+  const other = { score: 0.1, pinsNearby: 2, safePins: 2, dangerPins: 0, hazardsNearby: 0 };
+  const claim = geo.routeRankingClaim([withHazard, other]);
+  eq(claim.kind, 'hazardOnRoute');
+  eq(claim.hazardsNearby, 1);
+  eq(claim.isUnavoidable, false, 'the other route avoids it, so it is avoidable');
+});
+
+check('routeRankingClaim: says so when every route passes the same thing', () => {
+  const a = { score: 0.5, pinsNearby: 3, safePins: 3, dangerPins: 0, hazardsNearby: 1 };
+  const b = { score: 0.1, pinsNearby: 3, safePins: 3, dangerPins: 0, hazardsNearby: 2 };
+  eq(geo.routeRankingClaim([a, b]).isUnavoidable, true);
+});
+
+check('routeRankingClaim: credits a route for avoiding one the others hit', () => {
+  const clean = { score: 0.8, pinsNearby: 2, safePins: 2, dangerPins: 0, hazardsNearby: 0 };
+  const hit   = { score: -0.9, pinsNearby: 2, safePins: 2, dangerPins: 0, hazardsNearby: 1 };
+  eq(geo.routeRankingClaim([clean, hit]).kind, 'avoidsHazard');
+});
+
+check('routeRankingClaim: a hazard alone is evidence, with no ratings anywhere', () => {
+  // Previously this needed pins to say anything at all, so a police cordon on an unrated street
+  // produced "ranked by distance only" — the ranking silently ignoring its best information.
+  const hit   = { score: -1.5, pinsNearby: 0, safePins: 0, dangerPins: 0, hazardsNearby: 1 };
+  const clean = { score: 0, pinsNearby: 0, safePins: 0, dangerPins: 0, hazardsNearby: 0 };
+  const claim = geo.routeRankingClaim([clean, hit]);
+  eq(claim.haveEvidence, true);
+  eq(claim.kind, 'avoidsHazard');
+});
 // ---------------------------------------------------------------------------
 console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
 if (failures.length) {
