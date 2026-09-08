@@ -236,12 +236,39 @@ queued and stays on the map labelled pending; it survives the pins array being r
 a genuine page reload; on reconnect it uploads, gets its real id, loses the pending flag and leaves
 the queue empty; and a server refusal is dropped rather than retried, with the count reported.
 
-Still open here:
-- Only pin creates and votes are queued. Edits and deletes of an already-saved mark still need a
-  connection, and say so.
-- The queue holds the walker's own unsent marks — coordinates and times, on their own device, until
-  each one lands. Capped at 200 and never sent anywhere except as the marks themselves, but it is a
-  local trace, which is worth remembering if the device itself is the threat.
+**Editing and deleting an already-saved mark now waits for the real answer before claiming one —
+fixed 2026-09-08.** This entry used to say edits and deletes "still need a connection, and say so."
+They needed a connection; they did not say so. `deletePin` filtered the pin out of the local array
+and fired `persistDelete` without awaiting it, then unconditionally showed "Report deleted." — so a
+dropped connection (the same moment an outbox exists for) removed the pin from the map and the
+walker's own list while it sat untouched on the server for everyone else, with a toast confidently
+telling the one person who asked for it that it was gone. Editing a rating and re-picking a street
+for an owned pin had the identical shape: the local rating counts (or the street geometry) were
+changed and "Report updated."/"Updated — now marking…" shown regardless of whether `persistUpdate`
+ever reached the server, so a failed save left the phone quietly disagreeing with the database until
+the next full refresh silently snapped it back with no explanation. Same bug as the read-side
+silent failures this file keeps naming, just on a write: a confident claim standing in for a check
+that was never made.
+
+All three writes are now awaited before anything is said or changed locally: on failure the pin (or
+its street/rating) stays exactly as last saved, the existing per-call error toast
+(`persistUpdate`/`persistDelete` already had one) is what the walker sees, and nothing is silently
+reverted later because nothing was changed yet. The three buttons that call `deletePin` and the two
+that call `persistUpdate` directly now go through `onceAtATime`, per the rule this file already
+wrote down for any handler that awaits before writing.
+
+**Deliberately still not queued.** These stay a "needs a connection" case rather than joining the
+outbox: unlike a new mark or a vote, there is no local placeholder that can honestly stand in for
+"street re-traced" or "rating changed" while offline, and retrying a delete against a pin that has
+since changed server-side is a different, harder problem than retrying a create. Only pin creates
+and votes are queued.
+
+Not verified beyond reading and the geometry suite: no live Supabase call was made from this
+environment, so the actual round trip — a delete or an edit failing offline and the toast/loop
+behaving as described — has not been watched happening. The queue holds the walker's own unsent
+marks — coordinates and times, on their own device, until each one lands. Capped at 200 and never
+sent anywhere except as the marks themselves, but it is a local trace, which is worth remembering if
+the device itself is the threat.
 
 ### Somewhere to go (refuges) — **done, 2026-09-08**
 Borrowed from the competition, and possibly the best idea in the category. Every other layer here

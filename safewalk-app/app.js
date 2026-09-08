@@ -1421,7 +1421,7 @@ document.getElementById('trimCancelBtn').addEventListener('click', () => {
 
 document.getElementById('trimUndoBtn').addEventListener('click', undoWaypoint);
 
-document.getElementById('trimDoneBtn').addEventListener('click', () => {
+document.getElementById('trimDoneBtn').addEventListener('click', onceAtATime(async () => {
   if (!trimState || trimState.path.length < 2) {
     showToast('Tap a start and an end point along the streets first.');
     return;
@@ -1433,14 +1433,23 @@ document.getElementById('trimDoneBtn').addEventListener('click', () => {
 
   if (trimEditingPinId) {
     const p = pins.find((x) => x.id === trimEditingPinId);
+    const pinId = trimEditingPinId;
     endStreetTrim();
     trimEditingPinId = null;
     if (p) {
-      p.paths = [trimmedPath];
-      p.streetName = streetName;
-      p.lat = mid[0];
-      p.lng = mid[1];
-      persistUpdate(p);
+      // p used to be mutated straight away and persistUpdate fired without awaiting it, so this
+      // always said "Updated" and left the new street showing locally even when the save never
+      // reached the server — the same confident-wrong-claim shape as the read-side bugs this
+      // project keeps finding, just on a write. The next full refresh from the cloud would then
+      // silently snap the pin back to its old street with no explanation, well after the person
+      // had walked away believing the new one had stuck.
+      const patched = { ...p, paths: [trimmedPath], streetName, lat: mid[0], lng: mid[1] };
+      const ok = await persistUpdate(patched);
+      if (!ok) { openPinSheet(pinId); return; }   // persistUpdate already said why; the pin keeps its last-saved street
+      p.paths = patched.paths;
+      p.streetName = patched.streetName;
+      p.lat = patched.lat;
+      p.lng = patched.lng;
       renderPins();
       renderMyReports();
       openPinSheet(p.id);
@@ -1454,7 +1463,7 @@ document.getElementById('trimDoneBtn').addEventListener('click', () => {
   endStreetTrim();
   streetLookupStatus.textContent = `✓ Marking ${meters}m of ${streetName}`;
   openSheet('reportSheet');
-});
+}));
 
 document.getElementById('pinRetraceBtn').addEventListener('click', async () => {
   const p = pins.find((x) => x.id === activePinId);
@@ -1560,9 +1569,7 @@ function openPinSheet(id) {
   openSheet('pinSheet');
 }
 
-document.getElementById('pinDeleteBtn').addEventListener('click', () => {
-  deletePin(activePinId, { returnTo: null });
-});
+document.getElementById('pinDeleteBtn').addEventListener('click', onceAtATime(() => deletePin(activePinId, { returnTo: null })));
 
 // The discoverable half of the fix above: a hold over an existing mark is the fast way to add
 // another one, and this is the way you find without being told.
@@ -2577,10 +2584,10 @@ function renderMyReports() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn btn-danger';
     deleteBtn.textContent = 'Delete';
-    deleteBtn.addEventListener('click', (e) => {
+    deleteBtn.addEventListener('click', onceAtATime((e) => {
       e.stopPropagation();
-      deletePin(p.id);
-    });
+      return deletePin(p.id);
+    }));
     actions.appendChild(showBtn);
     actions.appendChild(editBtn);
     actions.appendChild(deleteBtn);
@@ -2594,11 +2601,16 @@ function renderMyReports() {
 async function deletePin(id, { returnTo = 'myReportsSheet' } = {}) {
   const ok = await showConfirm('Delete this report? This cannot be undone.', { okLabel: 'Delete', title: 'Delete this report?' });
   if (!ok) { if (returnTo) openSheet(returnTo); else closeSheets(); return; }
+  // persistDelete used to be fired without awaiting it, so this always said "Report deleted" and
+  // always dropped the pin from the local map and list — even when the delete never reached the
+  // server, most often because the connection was gone right then. The pin looked gone to the one
+  // person who asked for that, while it sat on the map for everyone else, unwarned.
+  const deleted = await persistDelete(id);
+  if (returnTo) openSheet(returnTo); else closeSheets();
+  if (!deleted) return;   // persistDelete already said why; the pin stays exactly as it was
   pins = pins.filter((x) => x.id !== id);
-  persistDelete(id);
   renderPins();
   renderMyReports();
-  if (returnTo) openSheet(returnTo); else closeSheets();
   showToast('Report deleted.');
   buzz();
 }
@@ -2631,26 +2643,30 @@ document.querySelectorAll('#editPinSheet [data-edit-rating]').forEach((btn) => {
   });
 });
 
-document.getElementById('saveEditPin').addEventListener('click', () => {
+document.getElementById('saveEditPin').addEventListener('click', onceAtATime(async () => {
   const p = pins.find((x) => x.id === editingPinId);
   if (!p) return;
+  // persistUpdate used to be fired without awaiting it here, so the rating counts below were
+  // changed and "Report updated." shown regardless of whether the save reached the server. A
+  // dropped connection then left the pin quietly showing a rating nobody on the server had agreed
+  // to, with no sign anything had gone wrong.
+  const patched = { ...p, creatorRating: editingRating, creatorNote: document.getElementById('editPinNote').value.trim() };
+  const ok = await persistUpdate(patched);
+  if (!ok) return;   // persistUpdate already said why; nothing here was changed yet, so nothing to undo
   if (p.creatorRating === 'safe') p.safe = Math.max(0, p.safe - 1);
   else if (p.creatorRating === 'danger') p.danger = Math.max(0, p.danger - 1);
   if (editingRating === 'safe') p.safe++;
   else p.danger++;
   p.creatorRating = editingRating;
-  p.creatorNote = document.getElementById('editPinNote').value.trim();
-  persistUpdate(p);
+  p.creatorNote = patched.creatorNote;
   renderPins();
   renderMyReports();
   closeSheets();
   showToast('Report updated.');
   buzz();
-});
+}));
 
-document.getElementById('deleteEditPin').addEventListener('click', () => {
-  deletePin(editingPinId);
-});
+document.getElementById('deleteEditPin').addEventListener('click', onceAtATime(() => deletePin(editingPinId)));
 
 
 // ---------- "Near me": the map, in words ----------
@@ -3435,24 +3451,28 @@ async function persistCreate(pin) {
   );
 }
 
+// Returns whether the write actually reached the server — callers rely on this rather than firing
+// the call and reporting success on their own, which is what let a dropped connection here show
+// "Report updated"/"Report deleted" while the row on the server stayed exactly as it was.
 async function persistUpdate(pin) {
-  if (!currentUser) return;
+  if (!currentUser) return false;
   const { error } = await settled(sb.from('pins').update({
     lat: pin.lat, lng: pin.lng, radius_m: pin.radius || null, path: pin.paths || null,
     street_name: pin.streetName || null, creator_rating: pin.creatorRating,
     creator_note: pin.creatorNote || null,
   }).eq('id', pin.id), 'save changes');
-  if (error) { showToast('Could not save changes: ' + error.message); return; }
-  await writeExpectingRows(
+  if (error) { showToast('Could not save changes: ' + error.message); return false; }
+  return writeExpectingRows(
     sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id),
     'update your rating'
   );
 }
 
 async function persistDelete(id) {
-  if (!currentUser) return;
+  if (!currentUser) return false;
   const { error } = await settled(sb.from('pins').delete().eq('id', id), 'delete that mark');
-  if (error) showToast('Could not delete: ' + error.message);
+  if (error) { showToast('Could not delete: ' + error.message); return false; }
+  return true;
 }
 
 // Feeds the reputation system: tells the database that this walker's verdict either backed up or
