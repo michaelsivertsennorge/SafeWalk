@@ -393,6 +393,27 @@ async function settled(call, what) {
 // rather than any one bug inside it.
 //
 // So: every handler that puts a spinner up goes through here, and a throw always ends in a message.
+// The rule the incident bug taught, written down so the next async handler gets it for free.
+//
+// A SYNCHRONOUS click handler cannot run twice over itself: the event loop finishes it before the
+// next tap is dispatched, which is why the rating and route-feedback buttons are safe with only
+// their own state guards. A handler that AWAITS is a different animal — the gap between the await
+// and the write is wide open, and twelve taps landed twelve identical assault reports in it.
+//
+// So: anything that awaits before writing gets wrapped in this.
+function onceAtATime(fn) {
+  let running = false;
+  return async (...args) => {
+    if (running) return;
+    running = true;
+    try {
+      await fn(...args);
+    } finally {
+      running = false;
+    }
+  };
+}
+
 function guarded(statusId, fn) {
   return async (...args) => {
     try {
@@ -3809,7 +3830,7 @@ function walkShareUrl(token) {
 
 // ---------- Walker's side ----------
 
-document.getElementById('startWatchedWalkBtn').addEventListener('click', async () => {
+document.getElementById('startWatchedWalkBtn').addEventListener('click', onceAtATime(async () => {
   if (!activeRouteCoords || activeRouteCoords.length < 2) { showToast('Pick a route first.'); return; }
   if (!requireAccount('to let someone watch your walk')) return;
   if (!sb) { showToast('You need a connection to start a watched walk.'); return; }
@@ -3824,7 +3845,7 @@ document.getElementById('startWatchedWalkBtn').addEventListener('click', async (
   document.getElementById('walkShareStatus').textContent = '';
   offerSmsToContact(data.share_token);
   openSheet('walkShareSheet');
-});
+}));
 
 // The two message-app URL shapes are not interchangeable: RFC 5724 specifies `sms:number?body=`,
 // which Android follows, while iOS has always wanted `sms:number&body=` and drops the text with the
@@ -4460,8 +4481,11 @@ async function voteIncident(vote) {
   loadIncidents();
 }
 
-document.getElementById('incidentConfirmBtn').addEventListener('click', () => voteIncident(1));
-document.getElementById('incidentDisputeBtn').addEventListener('click', () => voteIncident(-1));
+// Upsert makes a repeat harmless in the database, but it still fires a request per tap and can
+// close the sheet under someone mid-press. One at a time.
+const voteIncidentOnce = onceAtATime(voteIncident);
+document.getElementById('incidentConfirmBtn').addEventListener('click', () => voteIncidentOnce(1));
+document.getElementById('incidentDisputeBtn').addEventListener('click', () => voteIncidentOnce(-1));
 
 document.getElementById('incidentDeleteBtn').addEventListener('click', async () => {
   const id = activeIncidentId;
