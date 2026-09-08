@@ -2304,9 +2304,13 @@ function renderMyReports() {
   list.innerHTML = '';
   const mine = pins.filter((p) => p.own).sort((a, b) => b.createdAt - a.createdAt);
   if (!mine.length) {
-    list.innerHTML = currentUser
-      ? '<p class="sheet-sub">You haven’t added any ratings yet — tap the map to rate a spot, or press and hold to mark an area.</p>'
-      : '<p class="sheet-sub">Sign in to start adding ratings. They’ll follow your account, so they show up on every device you use.</p>';
+    // "You haven't added any ratings yet" is a claim about the person. Only make it when the fetch
+    // that would have found them actually succeeded.
+    list.innerHTML = !currentUser
+      ? '<p class="sheet-sub">Sign in to start adding ratings. They’ll follow your account, so they show up on every device you use.</p>'
+      : myHistoryIncomplete
+        ? '<p class="sheet-sub">Couldn’t load your ratings just now — this list may be incomplete. Reopen it once you have a connection.</p>'
+        : '<p class="sheet-sub">You haven’t added any ratings yet — tap the map to rate a spot, or press and hold to mark an area.</p>';
     return;
   }
   mine.forEach((p) => {
@@ -2946,6 +2950,9 @@ function hideStaleBanner() {
 const PIN_FETCH_RADIUS_M = 5000;
 const PIN_REFETCH_AFTER_M = 2000;
 let lastPinFetchAt = null; // { lat, lng }
+// True when the own-pins or votes fetch failed, so "My reports" and the vote state are known to be
+// incomplete rather than known to be empty. The difference is the whole point.
+let myHistoryIncomplete = false;
 
 function pinFetchCentre() {
   // Prefer the person's actual position; fall back to whatever they are looking at.
@@ -3005,6 +3012,14 @@ async function refreshPinsFromCloud({ force = false } = {}) {
     }
     return;
   }
+
+  // The other two legs were never checked. Neither breaks the map, and that is exactly why they went
+  // unnoticed — they quietly change what the app tells you about YOURSELF. A failed own-pins fetch
+  // leaves own.data undefined, so "My reports & marks" renders its empty state and says "You haven't
+  // added any ratings yet" to someone who has; a failed votes fetch leaves votedIds empty, so pins
+  // you already rated invite you to rate them again, and the database refuses on submit. Both state
+  // a falsehood confidently rather than admitting a gap. Spotted by the hourly agent, PR #13.
+  myHistoryIncomplete = !!(own.error || votes.error);
 
   hideStaleBanner();
   lastPinFetchAt = centre;
