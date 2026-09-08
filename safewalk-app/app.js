@@ -356,21 +356,54 @@ function setLoadingStatus(el, text) {
 //
 // This turns a thrown call back into the { data, error } shape every caller was already written
 // for, so the existing error handling — which was fine — finally gets to run.
+// Nothing may wait forever. A request that has not answered in this long is not going to, and a
+// spinner that never clears is worse than an error: it tells someone the app is working on their
+// problem when nothing is happening at all.
+const SETTLED_TIMEOUT_MS = 20000;
+
 async function settled(call, what) {
   try {
-    return await call;
+    return await Promise.race([
+      call,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timed out')), SETTLED_TIMEOUT_MS)),
+    ]);
   } catch (thrown) {
     // navigator.onLine lies in one direction — a wifi that goes nowhere still reports true — so a
     // fetch that threw is treated as a lost connection whatever it claims. And the browser's own
     // wording ("Failed to fetch", "Load failed", "NetworkError when attempting to fetch resource")
     // is not a sentence to hand someone walking home; say the one thing that is true and useful.
     const raw = (thrown && thrown.message) || '';
+    if (raw === 'timed out') {
+      return { data: null, error: { message: 'That took too long and was given up on. Try again.', threw: true } };
+    }
     const networkish = !raw || /fetch|network|load failed|connection/i.test(raw);
     const message = (isOffline() || networkish)
       ? 'No connection just now, so this could not be saved.'
       : raw;
     return { data: null, error: { message, threw: true } };
   }
+}
+
+// settled() only covers the call. An exception ANYWHERE ELSE in an async click handler — a missing
+// element after a half-applied update, a typo on a rare branch — stops the function silently and
+// leaves whatever was on screen, which when a spinner is on screen is a spinner that never clears.
+// That has now produced three separate "it just keeps loading" reports from a real phone, each with
+// a different underlying cause, which is the signal that the shape of the handler is the problem
+// rather than any one bug inside it.
+//
+// So: every handler that puts a spinner up goes through here, and a throw always ends in a message.
+function guarded(statusId, fn) {
+  return async (...args) => {
+    try {
+      await fn(...args);
+    } catch (err) {
+      const el = statusId && document.getElementById(statusId);
+      if (el) el.textContent = 'Something went wrong on this screen — nothing was saved. Try again, and reload the app if it keeps happening.';
+      else showToast('Something went wrong — nothing was saved.');
+      console.error('SafeWalk: handler failed', err);
+    }
+  };
 }
 
 // In-app replacement for window.confirm() — native confirm/alert/prompt dialogs are known to
@@ -2704,7 +2737,7 @@ document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
 
 document.getElementById('cancelPasswordBtn').addEventListener('click', resetPasswordForm);
 
-document.getElementById('savePasswordBtn').addEventListener('click', async () => {
+document.getElementById('savePasswordBtn').addEventListener('click', guarded('passwordStatus', async () => {
   const statusEl = document.getElementById('passwordStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to change your password.'; return; }
   if (!currentUser) { statusEl.textContent = 'Sign in first.'; return; }
@@ -2741,7 +2774,7 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
   resetPasswordForm();
   showToast('Password changed.');
   buzz();
-});
+}));
 
 // ---------- Forgot your password ----------
 // Where any emailed link comes back to. Sending the current page rather than a hardcoded address
@@ -2759,7 +2792,7 @@ function appRedirectUrl() {
   return location.origin + location.pathname.replace(/index\.html$/, '');
 }
 
-document.getElementById('authForgotBtn').addEventListener('click', async () => {
+document.getElementById('authForgotBtn').addEventListener('click', guarded('authStatus', async () => {
   const statusEl = document.getElementById('authStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to reset your password.'; return; }
   const email = document.getElementById('authEmail').value.trim();
@@ -2782,7 +2815,7 @@ document.getElementById('authForgotBtn').addEventListener('click', async () => {
   statusEl.textContent = error
     ? 'Too many attempts just now. Wait a minute and try again.'
     : 'If there is an account for that address, a reset link is on its way. Check your spam folder too. Open it on this device.';
-});
+}));
 
 function openNewPasswordSheet() {
   ['resetPassword', 'resetPasswordAgain'].forEach((id) => { document.getElementById(id).value = ''; });
@@ -2790,7 +2823,7 @@ function openNewPasswordSheet() {
   openSheet('newPasswordSheet');
 }
 
-document.getElementById('saveResetPasswordBtn').addEventListener('click', async () => {
+document.getElementById('saveResetPasswordBtn').addEventListener('click', guarded('resetStatus', async () => {
   const statusEl = document.getElementById('resetStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish this.'; return; }
   const next = document.getElementById('resetPassword').value;
@@ -2815,7 +2848,7 @@ document.getElementById('saveResetPasswordBtn').addEventListener('click', async 
   closeSheets();
   showToast('Password changed. You are signed in.');
   buzz();
-});
+}));
 
 // ---------- Reporter standing ----------
 // Only ever about yourself. There is no way to look up anyone else's accuracy, by design: a public
@@ -2931,7 +2964,7 @@ document.getElementById('authToggleModeBtn').addEventListener('click', () => {
   setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
 });
 
-document.getElementById('authSubmitBtn').addEventListener('click', async () => {
+document.getElementById('authSubmitBtn').addEventListener('click', guarded('authStatus', async () => {
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const statusEl = document.getElementById('authStatus');
@@ -2956,7 +2989,7 @@ document.getElementById('authSubmitBtn').addEventListener('click', async () => {
   closeSheets();
   showToast(authMode === 'signin' ? 'Signed in.' : 'Account created.');
   buzz();
-});
+}));
 
 // ---------- Cloud sync ----------
 function rowToPin(row, myVotedIds) {
@@ -4253,7 +4286,7 @@ document.querySelectorAll('#incidentKinds .incident-kind').forEach((btn) => {
   });
 });
 
-document.getElementById('submitIncident').addEventListener('click', async () => {
+document.getElementById('submitIncident').addEventListener('click', guarded('incidentStatus', async () => {
   const statusEl = document.getElementById('incidentStatus');
   if (!pendingIncidentKind || !pendingPoint) return;
   if (!requireAccount('to report something that happened')) return;
@@ -4283,7 +4316,7 @@ document.getElementById('submitIncident').addEventListener('click', async () => 
   showToast('Reported. It stays on the map for seven days, and others can confirm or dispute it.', 5000);
   buzz();
   loadIncidents();
-});
+}));
 
 // ---------- Viewing and disputing one ----------
 
