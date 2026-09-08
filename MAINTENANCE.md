@@ -14,13 +14,24 @@ Read `ROADMAP.md` and `README.md` in full first. `ROADMAP.md` is the memory betw
 wanted, what is already done, what is known-broken, and the section **"Rules that must not be
 broken"**, which you must read before changing anything.
 
+**Then check open pull requests before picking anything** — `ROADMAP.md` only updates when a PR
+merges, so it stays silent about work already proposed and waiting on the owner. Skipping this step
+is exactly how three separate runs (PRs #3, #4 and #6) each independently "fixed" the identical
+police-legend silent failure, none of them aware the others existed, because each one only read
+`ROADMAP.md` and found the bug still marked open there. List open PRs and skim their titles and
+diffs; if one already addresses the item you were about to pick, do not open a competing one. Either
+pick a different item, or — only if you can see a concrete, material gap the open PR leaves (not a
+stylistic preference) — say so in a short PR comment rather than duplicating the whole fix.
+
 Then pick **exactly one** open item and do it properly. One finished, honestly-described change is
 worth more than three half-done ones. Prefer, in this order:
 
 1. **A silent failure** — anywhere the app shows "nothing to report" when it actually failed to
-   find out. This exact bug class has now recurred four separate times in this project: police
+   find out. This exact bug class has now recurred five separate times in this project: police
    street names (a regex that could never match), lit streets (impossible from a browser at all),
-   the proximity warning, and an empty map when the CDN is blocked. Each one looked like calm.
+   the proximity warning, an empty map when the CDN is blocked, and `loadPoliceEvents` treating a
+   failed query the same as a quiet night (fixed, pending merge, in PRs #3/#4/#6 — see the note
+   above about checking open PRs before picking this one again). Each one looked like calm.
 2. **A claim that isn't true** — in the UI, the README or the roadmap. Correcting a false claim
    counts as a full item; say so in the PR.
 3. **A small capability** from the roadmap.

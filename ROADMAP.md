@@ -58,9 +58,10 @@ password, so the two network calls (`signInWithPassword` to re-authenticate, the
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
 Still open here:
-- There is no "forgot password" flow. Someone who cannot remember their password has no way back
-  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
-  is the missing half.
+- There is no "forgot password" flow — **fix proposed, awaiting merge: PR #5.** Someone who cannot
+  remember their password has no way back into their account, and the change-password form
+  deliberately requires the old one. `resetPasswordForEmail` is the missing half. Do not pick this
+  again until #5 is merged or closed — check open PRs first (see `MAINTENANCE.md`).
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 
@@ -97,6 +98,16 @@ Still open here:
   - Police events are shown but deliberately NOT folded into the route score. An official report is
     evidence a person should weigh themselves, and silently moving a route because of one would hide
     the reason. Worth revisiting with real usage.
+  - **The map key claims "Police report (recent)" whether or not `loadPoliceEvents` ever actually
+    succeeded — fix proposed, awaiting merge: three competing open PRs (#3, #4, #6) all fix this
+    same bug independently, because three separate hourly runs each found it and none checked for
+    open PRs first.** `loadPoliceEvents()` swallows a failed query
+    (`if (error || !Array.isArray(data)) return;`) and leaves the legend on its static text, so a
+    dropped connection reads exactly like "nothing recent to report" — the same silent-failure shape
+    as the lit-streets regex, the proximity flag and the blocked-CDN pin map. The three PRs differ
+    only in details (a 5-minute vs. 10-minute retry poll, or none at all): the owner should pick one,
+    merge it, and close the other two rather than trying to reconcile all three. **Do not open a
+    fourth PR for this** — check which of #3/#4/#6 is still open before touching this area again.
 - **Google sign-in** alongside email/password. Needs Google Cloud console setup.
 - **Reputation: the mechanism is verified, the numbers are still a guess.** `backend/tests/reputation.sql`
   was run against the live database on 2026-09-07 and all ten checks passed, including the ones no
