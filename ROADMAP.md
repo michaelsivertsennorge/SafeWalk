@@ -289,15 +289,24 @@ a control, and enlarging it would put a tap target over the map.
   each service individually (so the rest of the app stayed real) and they hold up better than this
   entry used to claim. Every one gives up in about a second, re-enables its button and leaves no
   half-rendered state:
-  - Valhalla down — "The routing service is taking too long to respond. Try again in a moment."
+  - Valhalla down — "The routing service is taking too long to respond. Try again in a moment." if
+    it actually timed out, "Could not reach the routing service. Try again in a moment." if the
+    connection failed outright — see below.
   - Overpass down — falls back to spot mode and says the street map service is not responding,
     deliberately not blaming the location.
   - Nominatim down — this one was wrong and is now fixed: a dead geocoder produced "Couldn't find
     that address, try adding a city name", which sends someone off correcting a correct address.
   - NVDB down — silent until 2026-09-06; now warns once and stays retryable.
 
-  Still worth doing: the Valhalla message says "taking too long" even when the connection failed
-  instantly. The advice it gives is right either way, so this is cosmetic.
+  **Fixed, 2026-09-08 (commit `7f12390`):** this entry used to say the Valhalla message says
+  "taking too long" even when the connection failed instantly, and called it cosmetic. It no longer
+  does — `fetchWithTimeout` now records whether a failure was actually an `AbortError` from its own
+  timeout, and the routing handler reads that to pick the right message. **Not verified: either
+  message actually appearing on screen** — no browser was available when this landed. This was also
+  the subject of PR #8, opened independently the same day before the direct fix landed; closed as
+  superseded once the two were found to overlap, which is worth a general note: a "cosmetic, low
+  priority" entry left open for months does not mean nobody will pick it up — one more reason to
+  keep this file current the moment a fix lands, not just when it's convenient.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
