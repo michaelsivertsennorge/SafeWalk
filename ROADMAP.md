@@ -92,6 +92,23 @@ Still open here:
   - **Nominatim has real gaps in Norwegian coverage.** `Økern`, a well-known Oslo district, returns
     no result at all, so those incidents are skipped. Verified it is not rate-limiting — `Skullerud`
     succeeds in the same second.
+  - **The police layer used to fail silently — the fourth instance of this exact bug class.**
+    `loadPoliceEvents` ran once at page load, and on a Supabase error or a dropped connection it hit
+    `if (error || !Array.isArray(data)) return;` and stopped there: `policeEvents` stayed at its
+    initial empty array, the map showed no red circles, and the legend still read the static
+    "Police report (recent)" it always had — indistinguishable from a quiet night. It also never
+    retried, so a load that failed once (a slow network at the moment the app opened) stayed broken
+    for the rest of the session even if the connection came back a second later.
+    Fixed on 2026-09-08 by giving the police legend row the same states the lighting legend already
+    had — `checking…`, `N here`, `none recorded recently`, `data unavailable right now` — set from
+    `loadPoliceEvents` on every outcome, plus a 10-minute retry interval since there is no per-view
+    fetch like lighting's `moveend` to hang a retry off. The `!sb` case (Supabase's CDN client never
+    loaded) is deliberately left alone: `refreshPinsFromCloud` already raises the "could not reach
+    the safety data" banner for that, so a second warning would be noise, not information.
+    **Not verified: watched failing.** No Supabase credentials or browser here, so this was read
+    and reasoned through, not run. Someone needs to force a failure (block the Supabase host, or
+    break the RLS policy on `police_events` temporarily) and confirm the legend actually flips to
+    "data unavailable" and later recovers on its own.
   - Only `Voldshendelse` and `Ro og orden` are mirrored. Revisit whether `Andre hendelser` is worth
     including once there is a feel for what it contains.
   - Police events are shown but deliberately NOT folded into the route score. An official report is

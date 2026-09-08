@@ -468,6 +468,27 @@ map.on('moveend', loadLighting);
 // weigh themselves, and quietly moving a route because of one would hide the reason.
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
+let loggedPoliceFailure = false;
+// Same bug class as the lighting legend used to have: this ran once at startup with no way to
+// tell "nobody has reported anything nearby" apart from "the request failed and nobody found
+// out". A dropped connection or a Supabase error left policeEvents at its initial empty array
+// forever — a map with no red circles either way, which is exactly the kind of calm this project
+// keeps getting burned by (see MAINTENANCE.md). Mirrors setLightingLegend's states.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    ok: `Police report (recent)${count ? ` — ${count} here` : ''}`,
+    none: 'Police reports — none recorded recently',
+    failed: 'Police reports — data unavailable right now',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
+// There is no per-view fetch to hang a retry off (unlike lighting, which reloads on every
+// moveend), so a failed load used to just stay failed for the rest of the session. Retrying on an
+// interval also means an alert or a cordon lifting shows up without the person having to reload.
+const POLICE_REFRESH_MS = 10 * 60 * 1000;
 
 async function loadPoliceEvents() {
   if (!sb) return;   // the pins path reports this; one banner is enough
@@ -475,7 +496,15 @@ async function loadPoliceEvents() {
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) {
+    setPoliceLegend('failed');
+    if (!loggedPoliceFailure) {
+      loggedPoliceFailure = true;
+      console.warn('SafeWalk: could not load police events.', error);
+    }
+    return;
+  }
+  loggedPoliceFailure = false;
 
   policeEvents = data
     .map((r) => {
@@ -483,6 +512,7 @@ async function loadPoliceEvents() {
       return p ? { ...r, lat: p.lat, lng: p.lng } : null;
     })
     .filter(Boolean);
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
   renderPoliceEvents();
   checkPoliceProximity();
 }
@@ -3003,6 +3033,7 @@ renderPins();
 locate(true);
 loadLighting();
 loadPoliceEvents();
+setInterval(loadPoliceEvents, POLICE_REFRESH_MS);
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);
