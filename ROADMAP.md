@@ -749,10 +749,39 @@ alarm countdown, a one-tap cancel that sends nothing, and finish sending `arrive
 never been watched holding a real screen awake, and the ten-minute idle threshold is a guess that
 only a real walk will confirm or refute.
 
+**The alarm write itself could fail silently and claim success anyway — fixed 2026-09-08.**
+`raiseWalkAlarm()` sent the `status: 'alarm'` update to `walks` and, without looking at whether that
+write actually succeeded, always said "Your watcher has been told you have stopped." A dropped
+connection at the exact moment someone stops moving — plausible, since a lost signal is itself one
+reason a phone stops updating — meant the watcher was never told anything, while the walker was
+reassured that they had been. That is rule 0 of this file (a confident wrong claim is worse than a
+missing feature) landing on the one screen where it costs the most: an alarm that silently failed to
+raise is indistinguishable, to the person who triggered it, from an alarm that worked.
+
+It now checks the write's result. On failure it says so plainly ("Could not reach your watcher — no
+connection. Still trying.") instead of the success line, and stays pending rather than giving up:
+the existing 30-second idle-watch tick retries it for as long as the walk stays active, and the
+browser's own `online` event retries it immediately the moment a connection is detected, both
+reusing timers/listeners the file already had rather than adding new polling. A retry is silent
+(no repeated toast/buzz) unless it is the one that finally succeeds after a failure was already
+shown, so a flaky signal does not turn into a toast every 30 seconds. **Not verified: watched in a
+browser** — no browser in this environment, so this was checked by reading the `settled()` contract
+it now branches on (same `{ data, error }` shape already used throughout the file) and by running
+the existing test suite and the parse check, not by actually cutting a connection mid-alarm on a
+phone. Someone with a phone should trigger the idle alarm with connectivity off, confirm the
+"Still trying" message appears rather than "has been told", then restore the connection and confirm
+it either updates within 30 seconds or the moment the phone reports being back online.
+
 Still open:
 - No push. A watcher whose phone is asleep learns nothing until they open the page — which is why
   wait-mode reads current state rather than replaying events, but it is not a substitute.
 - No SMS, so nothing reaches anybody who is not looking at a screen. First premium feature.
+- The retry above only starts once `raiseWalkAlarm()` has been called at least once with a real
+  connection failure. If the walker's phone is *already* offline for the entire 10-minute idle
+  window (rather than losing connection partway through), `beginWalkAlarmCountdown()` still fires
+  the countdown and the first `raiseWalkAlarm()` call still runs and correctly reports failure and
+  starts retrying — that path was traced and should work the same way — but it was reasoned about
+  rather than watched, same caveat as everything else in this section.
 
 ### Proximity-gated voting — decided 2026-09-08: option 3
 The owner deferred the choice. Taking **option 3, weight rather than gate**, and the reason is
