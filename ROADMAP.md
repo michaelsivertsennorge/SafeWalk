@@ -416,6 +416,119 @@ exactly this reason. So the real question underneath these five ideas is whether
 web app — instantly openable, no install, no app store — or becomes native and gains the ability to
 warn people when it is not open. That is worth deciding deliberately before building any of them.
 
+### Owner's decisions on the above — 2026-09-08, evening
+
+#### Branding is provisional and will change before launch
+Name, logo, colour themes and general style are all placeholders as far as launch is concerned. The
+owner expects to redo most of them. Two consequences worth acting on now rather than later:
+
+- **Do not spend effort polishing the current look**, and do not let the maintenance agent pick
+  "visual design" items. The four themes exist to prove the token system works, not because these
+  are the final colours.
+- **Keep the token system strict.** Because every colour already comes from a CSS custom property,
+  a rebrand is a new set of token values rather than a rewrite. Any hardcoded hex added between now
+  and then is a future rebrand that costs a day instead of an hour. Rule 1 still binds: whatever
+  the new palette is, rating colours keep their solid/dashed/dotted redundancy.
+- A trademark search belongs *before* the naming work, not after — see the IP note above.
+
+#### Rewards yes, paywall yes, but never over safety information
+Agreed: nothing that warns someone goes behind a reward or a payment. Alerts, the police layer,
+route safety and SOS stay free and ungated for everyone, signed in or not.
+
+What can be rewarded or sold without touching that: personal history and stats, more than one
+emergency contact, data export, offline map packs for a whole city (a genuine storage cost),
+recognition for accurate reporting, and the organisation accounts the competition already sells.
+
+**The real cost cliff is not Supabase.** SafeWalk currently runs on four free public services —
+Overpass, Valhalla, Nominatim and NVDB — each with a usage policy that assumes modest traffic.
+Nominatim's is explicit about no systematic querying, and we already respect it. At any real scale
+those either break, get blocked, or have to be self-hosted or replaced with paid providers, and
+that is the bill a paywall would actually be paying. Worth pricing before promising anything.
+
+#### Incidents: generic categories, and votes only from people who were there
+Agreed direction, with the safeguards above. The owner adds an upvote/downvote so false incidents
+can be removed, restricted to people who have actually walked past that point recently.
+
+**That restriction has a real tension with the privacy work and needs deciding, not assuming.**
+Verifying that someone was there means having a record that they were there — and migration 017
+exists precisely so the database does not hold a usable trail of where individuals walked. The
+client can *claim* a location, but a claim is not proof: anyone can post any coordinate, so a
+purely client-side check deters casual abuse and nothing more.
+
+Three honest options, in rough order of preference:
+1. **Accept the weak check** — client asserts proximity, server enforces only rate limits and the
+   existing reputation/cooldown gate. Cheap, keeps the privacy position, stops lazy abuse only.
+2. **Short-lived presence tokens** — the app records that this user was near this cell, kept for
+   hours not months, never published. Stronger, but it reintroduces exactly the record 017 removed,
+   with a retention promise as the only protection.
+3. **Weight rather than gate** — anyone may vote; votes from a device that was recently nearby
+   count for more. Degrades gracefully and leaks less than (2).
+
+Whichever is chosen, incidents need an expiry — they are news, not permanent facts about a street.
+
+#### Two walking modes: normal, and a watched walk
+Normal walk mode is what shipped today. The second mode keeps the app open and linked to another
+user in real time, accepting that the screen stays on.
+
+**This is buildable on the web as it stands, which the background-alarm version is not.** The
+Screen Wake Lock API keeps the display awake, and geolocation keeps running while it is — so a
+"stop moving for ten minutes and your watcher is told" alarm works *in this mode specifically*.
+Supabase Realtime can carry the live link without new infrastructure. What it costs is battery, and
+that has to be said plainly on the way in rather than discovered at 30% charge.
+
+The two modes must look and feel clearly different, or someone will believe they are being watched
+when they are not — which is worse than not offering it.
+
+#### Emergency contact stays a phone number, with an optional linked user
+A phone number is the primary contact and stays that way: it works when the other person has no
+account, no app, and no data. Optionally, and additionally, a contact may be another SafeWalk user,
+which is what the watched-walk mode links to. Never a replacement — the fallback must always be a
+call.
+
+#### Refuges: OpenStreetMap, and the coverage is better than expected
+Measured on 2026-09-08 with a live Overpass query over central Oslo (59.905–59.935, 10.70–10.78),
+counting places someone could plausibly walk into: **1282 candidates, 773 with `opening_hours`
+(60%), 27 tagged `24/7`.** Coverage is best exactly where it matters:
+
+| Kind | Total | With opening hours |
+|---|---|---|
+| Supermarket | 150 | 147 (98%) |
+| Pharmacy | 50 | 46 (92%) |
+| Convenience | 44 | 29 (66%) |
+| Restaurant | 564 | 309 (55%) |
+| Fuel | 8 | 4 (50%) |
+| Hotel | 51 | 4 (8%) |
+
+So this needs no new data source and no partnerships to start: the app already queries Overpass for
+street geometry, and this is the same pipe. Three cautions:
+
+- **`opening_hours` is a small language**, not a time range — `Mo-Fr 08:00-20:00; Sa 10:00-18:00;
+  PH off` is ordinary. Handling `24/7` and simple weekday ranges covers most of the value;
+  `opening_hours.js` handles the rest if a dependency is ever justified.
+- **A closed refuge is worse than no refuge.** Someone frightened walks to a locked door and has
+  lost two minutes. Only show places we are confident are open now; where the hours are unknown,
+  either omit them or label them plainly as unconfirmed.
+- **Hotels are the interesting gap**: 24-hour reception is a norm and a hotel lobby is one of the
+  better places to walk into, but only 8% state hours. Worth treating as a separate, clearly
+  labelled category rather than dropping.
+
+Verified schemes run by councils exist in some countries and would be stronger than OSM where they
+exist; that is a later step, not a blocker.
+
+#### Long term: ship it through the app stores
+The owner wants SafeWalk installable from Google Play and the App Store. Recorded as direction, not
+scheduled work.
+
+The pragmatic route is a **Capacitor wrapper**: the existing web app keeps being the app, gains a
+native shell, and with it background geolocation, real push notifications and a store listing —
+which is what unlocks the alarm-while-closed version of the walked-home feature. A full native
+rewrite buys little that a wrapper does not, at many times the cost.
+
+Two things to know before committing: both stores review apps that handle location and emergencies
+more carefully than average, and an app that tells people where is safe invites questions about
+accuracy and liability. And once there is a store listing, the privacy policy and data-protection
+work stops being optional — Apple and Google both require a privacy label before the first release.
+
 ## Rules that must not be broken
 
 1. **Never publish authorship.** `pins_with_scores` exposes `is_mine`, never `user_id`; `votes` and
