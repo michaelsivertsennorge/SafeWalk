@@ -2813,10 +2813,23 @@ document.getElementById('accountActionBtn').addEventListener('click', async () =
     // Signing out of THIS device never needs the server's permission. So when the round trip fails,
     // fall back to a local sign-out, which just drops the stored session. Anyone who needs every
     // device signed out can change their password, which revokes the rest.
-    let { error } = await sb.auth.signOut();
+    // Both calls are wrapped, because a rejected promise here is indistinguishable to the user from
+    // the bug above: the await throws, every line after it is skipped, and the confirmation box just
+    // closes onto an unchanged screen. The reporter described exactly that — confirmation appeared,
+    // confirming did nothing — and an unhandled rejection inside an async click handler produces it
+    // with no console message anyone walking home would ever see.
+    let error = null;
+    try {
+      ({ error } = await sb.auth.signOut());
+    } catch (thrown) {
+      error = thrown || { message: 'sign-out failed' };
+    }
     if (error) {
-      const local = await sb.auth.signOut({ scope: 'local' });
-      error = local.error;
+      try {
+        ({ error } = await sb.auth.signOut({ scope: 'local' }));
+      } catch (thrown) {
+        error = thrown || { message: 'sign-out failed' };
+      }
     }
     if (error) {
       // Not "clear my data on this device" — that button removes settings and the emergency
