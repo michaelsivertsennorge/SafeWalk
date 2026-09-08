@@ -164,8 +164,15 @@ a control, and enlarging it would put a tap target over the map.
     that address, try adding a city name", which sends someone off correcting a correct address.
   - NVDB down — silent until 2026-09-06; now warns once and stays retryable.
 
-  Still worth doing: the Valhalla message says "taking too long" even when the connection failed
-  instantly. The advice it gives is right either way, so this is cosmetic.
+  **Fixed, 2026-09-08:** the Valhalla message said "taking too long" even when the connection
+  failed instantly — `fetchWithTimeout` collapsed a genuine timeout and an immediate refusal
+  (DNS failure, connection refused, CORS) into the same `null`, so the caller had no way to tell
+  which had happened and always blamed the clock. It now records whether the failure was actually
+  an `AbortError` from its own timeout, and the Valhalla error message only says "taking too long"
+  when that is true; any other failure now says "Could not reach the routing service." instead.
+  Only this one call site was changed — the routing message is the only one of the four API
+  failure messages listed above that claimed a specific *kind* of failure rather than just "not
+  responding" or "down", so it was the only one capable of being wrong this way.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line

@@ -69,13 +69,21 @@ function findNearbyPin(lat, lng, radius = 40) {
 // so and point at what does still work.
 const isOffline = () => navigator.onLine === false;
 
+// Set on every call so a caller that cares can tell "the request actually took the full timeoutMs"
+// apart from "it failed immediately" (refused connection, DNS failure, CORS) — the two read very
+// differently to fetch() (both just throw), but they are not the same fact to tell someone: "taking
+// too long" is not true of a request that never got anywhere at all.
+let lastFetchTimedOut = false;
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  lastFetchTimedOut = false;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     return res.ok ? res : null;
-  } catch {
+  } catch (err) {
+    lastFetchTimedOut = err && err.name === 'AbortError';
     return null;
   } finally {
     clearTimeout(timeout);
@@ -1791,7 +1799,9 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     });
     if (!res) throw new Error(isOffline()
       ? "You are offline, so a route cannot be worked out — that needs a connection. The map and your saved marks still work."
-      : "The routing service is taking too long to respond. Try again in a moment.");
+      : lastFetchTimedOut
+        ? "The routing service is taking too long to respond. Try again in a moment."
+        : "Could not reach the routing service. Try again in a moment.");
     const data = await res.json();
     if (!data.trip) throw new Error(`No ${modeLabel} route found between those points.`);
 
