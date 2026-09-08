@@ -1249,3 +1249,55 @@ a:focus-visible {
 }
 .refuge-open { color: var(--safe-strong); font-weight: 600; }
 .refuge-unknown { color: var(--text-dim); font-style: italic; }
+
+/* Incidents. A marker with a warning glyph — never the police layer's dashed area, because a
+   stranger's report must not be mistakable for an official one. */
+.incident-marker { background: none; border: none; }
+.incident-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  transform: rotate(45deg);
+  background: color-mix(in srgb, var(--danger-strong) 82%, var(--bg));
+  border: 2px solid var(--bg);
+  box-shadow: 0 2px 8px rgba(0,0,0,.45);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.incident-glyph::first-letter { display: inline-block; transform: rotate(-45deg); }
+
+.incident-kinds { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.incident-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 52px;
+  padding: 9px 13px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.incident-kind span { font-size: 12px; font-weight: 400; color: var(--text-dim); }
+.incident-kind.selected { border-color: var(--danger-strong); background: color-mix(in srgb, var(--danger) 14%, var(--bg-elev-2)); }
+.incident-view-note { margin: 6px 0 10px; font-size: 14px; line-height: 1.5; }
+.incident-vote-row { margin-bottom: 2px; }
+/* Map key swatch for user reports — the diamond, so the key distinguishes them from the police
+   layer's dashed area at a glance rather than only in the wording. */
+.legend-incident {
+  width: 10px; height: 10px;
+  flex: none;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--danger-strong) 82%, var(--bg));
+  display: inline-block;
+}

@@ -4122,6 +4122,186 @@ async function loadRefuges() {
   });
 }
 
+
+// ---------- Incidents ----------
+// An assertion that something happened, not an opinion about a place, and treated differently
+// throughout: its own colour, its own shape on the map, its own seven-day life, and the only thing
+// in this app anyone else can vote down.
+//
+// Drawn as a marker with a warning glyph, never as the police layer's dashed area. If a stranger's
+// report can be mistaken for an official one, the app has laundered a claim into a police record —
+// and the map key says which is which.
+const INCIDENT_KINDS = {
+  assault:     { label: 'Assault', glyph: '⚠' },
+  robbery:     { label: 'Robbery or theft', glyph: '⚠' },
+  harassment:  { label: 'Harassment', glyph: '⚠' },
+  disturbance: { label: 'Fighting or aggression', glyph: '⚠' },
+  hazard:      { label: 'Unsafe place', glyph: '⚠' },
+};
+// Voting counts double from someone who was near it. A weight, never a gate — see ROADMAP.md.
+const INCIDENT_NEARBY_M = 250;
+const INCIDENT_FETCH_RADIUS_M = 5000;
+
+const incidentLayer = L.layerGroup().addTo(map);
+let incidents = [];
+let pendingIncidentKind = null;
+let activeIncidentId = null;
+
+async function loadIncidents() {
+  if (!sb) return;
+  const c = typeof pinFetchCentre === 'function' ? pinFetchCentre() : userLocation;
+  if (!c) return;
+  const { data, error } = await settled(
+    sb.rpc('incidents_near', { p_lat: c.lat, p_lng: c.lng, p_radius_m: INCIDENT_FETCH_RADIUS_M }),
+    'load reported incidents');
+  // Quiet on failure: the pins path already reports a lost connection, and a second banner saying
+  // the same thing is noise. What must never happen is an empty layer reading as "nothing reported".
+  if (error || !Array.isArray(data)) return;
+  incidents = data;
+  renderIncidents();
+}
+
+function renderIncidents() {
+  incidentLayer.clearLayers();
+  incidents.forEach((inc) => {
+    const marker = L.marker([inc.lat, inc.lng], {
+      icon: L.divIcon({
+        className: 'incident-marker',
+        html: `<span class="incident-glyph">${INCIDENT_KINDS[inc.category]?.glyph || '⚠'}</span>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+      }),
+      keyboard: false,
+    });
+    marker.on('click', (e) => {
+      if (e.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
+      openIncidentView(inc.id);
+    });
+    marker.addTo(incidentLayer);
+  });
+}
+
+// ---------- Reporting one ----------
+
+document.getElementById('openIncidentBtn').addEventListener('click', () => {
+  if (!pendingPoint) { showToast('Tap the map where it happened first.'); return; }
+  pendingIncidentKind = null;
+  document.querySelectorAll('#incidentKinds .incident-kind').forEach((b) => b.classList.remove('selected'));
+  document.getElementById('incidentNote').value = '';
+  document.getElementById('incidentStatus').textContent = '';
+  document.getElementById('submitIncident').disabled = true;
+  document.getElementById('incidentCoords').textContent =
+    `${pendingPoint.lat.toFixed(5)}, ${pendingPoint.lng.toFixed(5)}`;
+  openSheet('incidentSheet');
+});
+
+document.querySelectorAll('#incidentKinds .incident-kind').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    pendingIncidentKind = btn.dataset.incident;
+    document.querySelectorAll('#incidentKinds .incident-kind').forEach((b) => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('submitIncident').disabled = false;
+  });
+});
+
+document.getElementById('submitIncident').addEventListener('click', async () => {
+  const statusEl = document.getElementById('incidentStatus');
+  if (!pendingIncidentKind || !pendingPoint) return;
+  if (!requireAccount('to report something that happened')) return;
+  if (!sb) { statusEl.textContent = 'You need a connection to report an incident.'; return; }
+
+  const note = document.getElementById('incidentNote').value.trim();
+  setLoadingStatus(statusEl, 'Reporting…');
+  const { error } = await settled(sb.from('incidents').insert({
+    user_id: currentUser.id,
+    category: pendingIncidentKind,
+    lat: pendingPoint.lat,
+    lng: pendingPoint.lng,
+    note: note || null,
+  }), 'report that');
+
+  if (error) {
+    // The cooldown is enforced by row-level security, so a suspended account gets a bare policy
+    // violation. Translate it rather than leaving somebody staring at Postgres.
+    statusEl.textContent = /row-level security|policy/i.test(error.message || '')
+      ? 'Your reports are paused for now — see My Page for why.'
+      : error.message;
+    return;
+  }
+
+  pendingIncidentKind = null;
+  pendingPoint = null;
+  closeSheets();
+  showToast('Reported. It stays on the map for seven days, and others can confirm or dispute it.', 5000);
+  buzz();
+  loadIncidents();
+});
+
+// ---------- Viewing and disputing one ----------
+
+function openIncidentView(id) {
+  const inc = incidents.find((x) => x.id === id);
+  if (!inc) return;
+  activeIncidentId = id;
+
+  document.getElementById('incidentViewTitle').textContent =
+    INCIDENT_KINDS[inc.category]?.label || 'Reported incident';
+  document.getElementById('incidentViewWhen').textContent =
+    'Reported about ' + describeAge(Date.now() - new Date(inc.occurred_at).getTime()) + '.';
+  const noteEl = document.getElementById('incidentViewNote');
+  noteEl.textContent = inc.note || '';
+  noteEl.hidden = !inc.note;
+
+  const up = Number(inc.confirmed) || 0;
+  const down = Number(inc.disputed) || 0;
+  document.getElementById('incidentViewTally').textContent = up || down
+    ? `${up} confirmed, ${down} disputed.`
+    : 'Nobody else has weighed in yet.';
+
+  // Distance decides how much a vote counts, and saying so beforehand is fairer than silently
+  // discounting it — and stops the "were you there?" question reading as an accusation.
+  const near = userLocation
+    && haversine(userLocation.lat, userLocation.lng, inc.lat, inc.lng) <= INCIDENT_NEARBY_M;
+  document.getElementById('incidentVoteHint').textContent = near
+    ? 'You are here now, so your answer counts double.'
+    : 'You are not near this spot, so your answer counts less than someone who is.';
+
+  document.getElementById('incidentDeleteBtn').hidden = !inc.is_mine;
+  openSheet('incidentViewSheet');
+}
+
+async function voteIncident(vote) {
+  const inc = incidents.find((x) => x.id === activeIncidentId);
+  if (!inc) return;
+  if (!requireAccount('to confirm or dispute a report')) return;
+  const near = !!userLocation
+    && haversine(userLocation.lat, userLocation.lng, inc.lat, inc.lng) <= INCIDENT_NEARBY_M;
+
+  const { error } = await settled(sb.from('incident_votes').upsert({
+    incident_id: inc.id, user_id: currentUser.id, vote, nearby: near,
+  }, { onConflict: 'incident_id,user_id' }), 'save your answer');
+
+  if (error) { showToast('Could not save your answer: ' + error.message); return; }
+  closeSheets();
+  showToast(vote === 1 ? 'Thanks — recorded as confirmed.' : 'Thanks — recorded as disputed.');
+  buzz();
+  loadIncidents();
+}
+
+document.getElementById('incidentConfirmBtn').addEventListener('click', () => voteIncident(1));
+document.getElementById('incidentDisputeBtn').addEventListener('click', () => voteIncident(-1));
+
+document.getElementById('incidentDeleteBtn').addEventListener('click', async () => {
+  const id = activeIncidentId;
+  const ok = await showConfirm('Remove this report from the map for everyone?',
+    { okLabel: 'Delete report', title: 'Delete your report?' });
+  if (!ok) { openIncidentView(id); return; }
+  const { error } = await settled(sb.from('incidents').delete().eq('id', id), 'delete that report');
+  if (error) { showToast('Could not delete: ' + error.message); return; }
+  showToast('Report deleted.');
+  loadIncidents();
+});
+
 // ---------- Init ----------
 renderAccountState();
 // onAuthStateChange also fires on load and pulls the map in, but only once Supabase has finished
@@ -4132,6 +4312,7 @@ renderPins();
 locate(true);
 loadLighting();
 loadPoliceEvents();
+loadIncidents();
 // One fetch at startup used to be the whole story: a dropped connection meant no police layer and
 // no proximity warning until the app was reopened, which on a walk home may be never.
 setInterval(loadPoliceEvents, POLICE_REFRESH_MS);

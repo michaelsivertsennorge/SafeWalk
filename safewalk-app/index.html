@@ -28,6 +28,7 @@
     <div class="legend-row"><span class="legend-line line-mixed"></span>Mixed (dashed)</div>
     <div class="legend-row"><span class="legend-line line-danger"></span>&gt;50% unsafe (dotted)</div>
     <div class="legend-row"><span class="legend-police"></span><span id="legendPolice" class="legend-muted">Police reports — checking…</span></div>
+    <div class="legend-row"><span class="legend-incident"></span>Reported by users (last 7 days)</div>
     <p class="legend-note">Line style backs up color, so it still reads if you're colorblind.</p>
   </div>
 
@@ -113,9 +114,62 @@
     </div>
     <textarea id="reportNote" maxlength="140" aria-label="Optional note" placeholder="Optional note — e.g. well lit, no sidewalk, felt followed... (140 chars)"></textarea>
     <p class="sheet-sub sheet-fineprint">Your rating and note are shown to everyone using SafeWalk. Your name never is.</p>
+    <hr class="divider" />
+    <!-- Deliberately a separate, quieter door than rating: most taps are ratings, and an incident
+         report is a much heavier claim that should be chosen, not fallen into. -->
+    <button class="btn btn-secondary btn-block" id="openIncidentBtn">⚠️ Something happened here instead</button>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Cancel</button>
       <button class="btn btn-primary" id="submitReport" disabled>Submit rating</button>
+    </div>
+  </section>
+
+
+  <!-- Reporting something that happened. Kept apart from rating a place on purpose: a rating is an
+       opinion, this is an assertion that a crime occurred, and the two should not feel alike. -->
+  <section class="sheet" id="incidentSheet" role="dialog" aria-modal="true" aria-labelledby="incidentSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="incidentSheetTitle">Report what happened</h2>
+    <p class="sheet-sub" id="incidentCoords"></p>
+    <p class="sheet-label">What happened here?</p>
+    <div class="incident-kinds" id="incidentKinds">
+      <button class="incident-kind" data-incident="assault">Assault<span>Someone was attacked</span></button>
+      <button class="incident-kind" data-incident="robbery">Robbery or theft<span>Something was taken</span></button>
+      <button class="incident-kind" data-incident="harassment">Harassment<span>Followed, threatened, shouted at</span></button>
+      <button class="incident-kind" data-incident="disturbance">Fighting or aggression<span>A fight, or an aggressive group</span></button>
+      <button class="incident-kind" data-incident="hazard">Unsafe place<span>No lighting, blocked path, broken glass</span></button>
+    </div>
+    <textarea id="incidentNote" maxlength="140" aria-label="Optional note about the place"
+      placeholder="Optional: what about the place matters? (140 chars)"></textarea>
+    <p class="sheet-sub sheet-fineprint">Describe <strong>what happened and where</strong> — never
+      what anyone looked like. Reports naming or describing people are the way apps like this end up
+      targeting the wrong person, and they will be removed. This is shown to everyone for seven days,
+      never your name, and people who were there can dispute it.</p>
+    <p class="sheet-sub" id="incidentStatus" aria-live="polite"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Cancel</button>
+      <button class="btn btn-danger" id="submitIncident" disabled>Report it</button>
+    </div>
+  </section>
+
+  <!-- An existing report, and the only place it can be disputed. -->
+  <section class="sheet" id="incidentViewSheet" role="dialog" aria-modal="true" aria-labelledby="incidentViewTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="incidentViewTitle">Reported incident</h2>
+    <p class="sheet-sub" id="incidentViewWhen"></p>
+    <p class="incident-view-note" id="incidentViewNote"></p>
+    <p class="sheet-sub" id="incidentViewTally"></p>
+    <p class="sheet-label">Were you there?</p>
+    <div class="sheet-actions incident-vote-row">
+      <button class="btn btn-secondary" id="incidentConfirmBtn">Yes, this happened</button>
+      <button class="btn btn-ghost" id="incidentDisputeBtn">This is wrong</button>
+    </div>
+    <p class="sheet-sub" id="incidentVoteHint"></p>
+    <p class="sheet-sub sheet-fineprint">Reported by someone using SafeWalk — not by the police. The
+      police layer is drawn separately, in red dashes.</p>
+    <button class="btn btn-danger btn-block" id="incidentDeleteBtn" hidden>Delete my report</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
     </div>
   </section>
 

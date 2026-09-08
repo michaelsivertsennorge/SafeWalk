@@ -279,6 +279,54 @@ Still open:
   reception is normal, but only 4 of 51 in central Oslo state hours, so most show as unconfirmed.
 - No walking directions to a refuge yet — tapping one centres the map on it, nothing more.
 
+### Incident reports — **done, 2026-09-08** (migration 019)
+Different in kind from a rating, and the schema knows it. A rating is an opinion about a place; an
+incident report asserts that **a crime happened** at a time and place, published to strangers. The
+two documented failure modes of this exact product category are designed against in the database,
+not in the UI where they could be edited away.
+
+**It must not become a way to report people.** Every category names an EVENT — assault, robbery,
+harassment, fighting, unsafe place. There is no "suspicious" and no "scary", because those invite a
+description of somebody who was standing there, and everywhere they have shipped the reports skew
+hard against minorities and homeless people. No photo column, no field for describing a person, note
+capped at 140 characters, and the form says plainly that reports naming or describing people will be
+removed.
+
+**It must not become a permanent accusation.** Seven-day life, then purged hourly by cron — not
+merely filtered out, since a hidden row is still an accusation sitting in a table.
+
+**Disputes, weighted by who was there.** Confirm or dispute from the report's own sheet; a vote from
+within 250m counts double. A weight, never a gate (ROADMAP option 3): the client can lie either way,
+so gating blocks honest people with bad GPS and stops nobody, and — the point — it stores no new
+fact about where anyone was, because the vote already names a place. A report is hidden once
+weighted doubt reaches 3 **and** exceeds its support; the floor of 3 is the reputation system's
+volume-floor lesson, without which two people could erase a true warning.
+
+**Timestamps are hour resolution, not day.** Rule 2 forbids day-finer times for *pins* because pins
+made minutes apart along a route reconstruct a walk. That reasoning does not transfer: a pin is one
+of many along a path, an incident is a single exceptional event, and its recency is most of its
+value — "an hour ago" and "six days ago" are different warnings. Hour keeps that without pinning
+anyone to a minute.
+
+**Drawn as a red diamond with a warning glyph, never the police layer's dashed area**, with its own
+row in the map key, and the report sheet says "Reported by someone using SafeWalk — not by the
+police". If a stranger's claim can be mistaken for an official one, the app has laundered it.
+
+Verified against the real database, rolled back: a fresh report is public; two distant doubters do
+NOT remove it (below the floor); a third does; two people who were actually there bring it back
+(weighted 4 against 3); an expired one vanishes. With the anon role, the raw `incidents` table and
+`incident_votes` are both refused while the public view is readable. Verified in the browser with
+the public key and no account: the layer loads, the public shape carries no `user_id`, the time is
+hour-resolution, and the proximity hint flips correctly between near and far.
+
+Still open:
+- No moderation path beyond community disputes. A defamatory report can be voted down but not
+  reported to anyone, and there is no appeal for a walker whose report is wrongly buried.
+- The reputation cooldown gates reporting (RLS), but incidents do not yet feed back into standing,
+  so a serial false reporter is not slowed by their own record.
+- Nothing warns someone that they are walking towards a reported incident; the police layer has a
+  proximity alert and this does not.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is
