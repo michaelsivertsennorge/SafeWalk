@@ -396,7 +396,7 @@
   <section class="sheet" id="contactSheet" role="dialog" aria-modal="true" aria-labelledby="contactSheetTitle" tabindex="-1" hidden>
     <div class="sheet-handle"></div>
     <h2 id="contactSheetTitle">Emergency contact</h2>
-    <p class="sheet-sub">SOS calls this person directly, after you confirm. Just the one, so there is nothing to choose between when you are in a hurry.</p>
+    <p class="sheet-sub">SOS calls the first person on this list, straight away, with nothing to choose between when you are in a hurry. Add up to three 2014 the others are offered afterwards, in case the first one does not pick up.</p>
     <div id="contactList" class="contact-list"></div>
     <button class="btn btn-secondary btn-block" id="showContactFormBtn">+ Add emergency contact</button>
     <div class="contact-form" id="contactForm" hidden>
@@ -482,6 +482,20 @@
     <div class="sheet-actions">
       <button class="btn btn-ghost" id="walkShareCancelBtn">Cancel walk</button>
       <button class="btn btn-primary" id="walkShareStartBtn">Start walking</button>
+    </div>
+  </section>
+
+
+  <!-- Offered after an SOS call is placed. The commonest way SOS fails is that nobody answers, and
+       coming back to a screen with no next step is the worst version of this app. Nothing here
+       dials on its own — every call is still a deliberate tap. -->
+  <section class="sheet" id="sosNextSheet" role="dialog" aria-modal="true" aria-labelledby="sosNextTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="sosNextTitle">No answer?</h2>
+    <p class="sheet-sub">Your other contacts, one tap each.</p>
+    <div id="sosNextList"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
     </div>
   </section>
 

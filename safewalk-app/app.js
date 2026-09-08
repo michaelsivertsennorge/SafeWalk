@@ -2049,7 +2049,33 @@ document.getElementById('sosBtn').addEventListener('click', async () => {
   if (!ok) return;
   buzz();
   placeCall(normalisePhone(contact.phone), contact.name);
+
+  // The commonest way SOS fails is not a wrong number — it is that they do not answer. Coming back
+  // to a screen with no next step, at that particular moment, is the worst version of this app.
+  // So the others are offered here, one tap each, already on screen when the call ends.
+  if (contacts.length > 1) offerBackupContacts(0);
 });
+
+// Shown after a call is placed, so it is waiting when they come back to the app rather than needing
+// to be found. Not a countdown and not automatic: nothing here dials on its own, ever.
+function offerBackupContacts(justCalled) {
+  const rest = contacts.filter((_, i) => i !== justCalled);
+  if (!rest.length) return;
+  const list = document.getElementById('sosNextList');
+  list.innerHTML = '';
+  rest.forEach((c) => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-danger btn-block';
+    btn.textContent = `Call ${c.name}`;
+    btn.addEventListener('click', () => {
+      buzz();
+      placeCall(normalisePhone(c.phone), c.name);
+      offerBackupContacts(contacts.indexOf(c));
+    });
+    list.appendChild(btn);
+  });
+  openSheet('sosNextSheet');
+}
 
 // Dialling via a real anchor click rather than location.href, for the same reason this app had to
 // stop using confirm(): a standalone PWA does not reliably honour a scripted navigation to a
@@ -2294,34 +2320,60 @@ function renderMenuHints() {
 
 // Only one emergency contact — SOS calls them directly, so there's no list to manage, just
 // "who is it" and a way to replace them.
+// Up to three, in order, and the order is the whole point. SOS has always dialled one person, which
+// is right — a picker is the last thing anyone wants mid-emergency — but it left the commonest
+// failure unanswered: they do not pick up. The first contact is still who SOS calls with no choice
+// to make; the others exist so that "no answer" is not the end of it.
+const MAX_CONTACTS = 3;
+
 function renderContacts() {
   const list = document.getElementById('contactList');
   const showFormBtn = document.getElementById('showContactFormBtn');
   list.innerHTML = '';
-  if (!contacts.length) {
-    showFormBtn.hidden = false;
-    return;
-  }
-  showFormBtn.hidden = true;
-  const c = contacts[0];
-  const row = document.createElement('div');
-  row.className = 'contact-row';
-  // textContent, not innerHTML: this names the person the SOS button dials, and a name containing
-  // <, & or " would otherwise be mangled or swallowed by the HTML parser. The data is self-authored
-  // and local-only, so this is about the name being displayed correctly far more than about
-  // scripting — but there is no reason to build it as HTML in the first place.
-  const who = document.createElement('span');
-  who.textContent = `${c.name} · ${c.phone}`;
-  row.appendChild(who);
-  const rm = document.createElement('button');
-  rm.textContent = 'Remove';
-  rm.addEventListener('click', () => {
-    contacts = [];
-    saveContacts(contacts);
-    renderContacts();
+  showFormBtn.hidden = contacts.length >= MAX_CONTACTS;
+  showFormBtn.textContent = contacts.length ? '+ Add another' : '+ Add emergency contact';
+
+  contacts.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'contact-row';
+
+    // textContent, not innerHTML: this names the person the SOS button dials, and a name containing
+    // <, & or " would otherwise be mangled or swallowed by the HTML parser. The data is
+    // self-authored and local-only, so this is about the name being displayed correctly far more
+    // than about scripting — but there is no reason to build it as HTML in the first place.
+    const who = document.createElement('span');
+    who.className = 'contact-who';
+    who.textContent = `${c.name} · ${c.phone}`;
+    row.appendChild(who);
+
+    if (i === 0) {
+      const tag = document.createElement('span');
+      tag.className = 'contact-primary';
+      tag.textContent = 'SOS calls this one';
+      row.appendChild(tag);
+    } else {
+      const up = document.createElement('button');
+      up.textContent = 'Make first';
+      up.addEventListener('click', () => {
+        contacts = [c, ...contacts.filter((x) => x !== c)];
+        saveContacts(contacts);
+        renderContacts();
+        renderMenuHints();
+      });
+      row.appendChild(up);
+    }
+
+    const rm = document.createElement('button');
+    rm.textContent = 'Remove';
+    rm.addEventListener('click', () => {
+      contacts = contacts.filter((x) => x !== c);
+      saveContacts(contacts);
+      renderContacts();
+      renderMenuHints();
+    });
+    row.appendChild(rm);
+    list.appendChild(row);
   });
-  row.appendChild(rm);
-  list.appendChild(row);
 }
 
 document.getElementById('showContactFormBtn').addEventListener('click', () => {
@@ -2351,12 +2403,20 @@ document.getElementById('addContactBtn').addEventListener('click', () => {
     return;
   }
   // Stored already normalised, so the dial string is correct even if this record predates SOS.
-  contacts = [{ name, phone: normalisePhone(phone) }]; // replaces any existing — there's only ever one
+  const next = normalisePhone(phone);
+  if (contacts.some((c) => normalisePhone(c.phone) === next)) {
+    showToast('That number is already one of your contacts.');
+    return;
+  }
+  // Appended, never replacing: the first contact is the one SOS dials, and quietly demoting the
+  // person somebody chose for that is the last thing this screen should do behind their back.
+  contacts = [...contacts, { name, phone: next }].slice(0, MAX_CONTACTS);
   saveContacts(contacts);
   document.getElementById('contactName').value = '';
   document.getElementById('contactPhone').value = '';
   document.getElementById('contactForm').hidden = true;
   renderContacts();
+  renderMenuHints();
 });
 
 document.getElementById('clearDataBtn').addEventListener('click', async () => {

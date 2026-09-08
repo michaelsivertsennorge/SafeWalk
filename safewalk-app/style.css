@@ -1315,3 +1315,17 @@ a:focus-visible {
 }
 .police-alert.alert-user-report .police-alert-icon,
 .police-alert.alert-user-report .police-alert-dismiss { color: var(--mixed); }
+
+/* Contacts are an ordered list now: the first is the one SOS dials, and the order has to be
+   visible at a glance rather than implied by position alone. */
+.contact-who { flex: 1; min-width: 0; }
+.contact-primary {
+  font-size: 11px;
+  color: var(--safe-strong);
+  border: 1px solid var(--safe-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  flex: none;
+}
+#sosNextList { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
