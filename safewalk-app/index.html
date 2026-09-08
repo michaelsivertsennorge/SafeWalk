@@ -188,9 +188,14 @@
     </div>
     <button class="btn btn-primary btn-block" id="findRouteBtn">Find safest route</button>
     <div id="routeStatus" class="route-status" aria-live="polite"></div>
-    <div id="routeResults" class="route-results"></div>
+    <!-- Above the list of routes, not below it. These used to sit under the results, which put them
+         121px past the bottom of the sheet on a 375px phone: present, wired up, and unreachable
+         without knowing to scroll past three route cards. The first route is selected already, so
+         the next thing anyone wants is to start walking it; choosing a different one is the rarer
+         case and belongs underneath. -->
     <button class="btn btn-primary btn-block" id="startWalkBtn" hidden>🚶 Start walking this route</button>
     <button class="btn btn-secondary btn-block" id="startWatchedWalkBtn" hidden>👁 Walk with someone watching</button>
+    <div id="routeResults" class="route-results"></div>
     <div class="route-feedback" id="routeFeedback" hidden>
       <p class="sheet-label">Actually walked or biked this route? Tell us how the selected one felt</p>
       <div class="rating-choice">
