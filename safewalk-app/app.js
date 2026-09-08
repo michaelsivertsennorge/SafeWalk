@@ -19,6 +19,16 @@ let contacts = loadContacts();
 // Writing needs an account. "One vote per person" only means something if there's a person behind
 // it, and that's enforced by the votes table's (pin_id, user_id) primary key. A device id can't do
 // that job: clearing browser storage would hand you a fresh identity and an unlimited ballot.
+// Read before the client exists, because creating it starts the URL scan that consumes the
+// fragment. A dead or already-used email link comes back as #error=...&error_description=... and
+// nothing else: supabase-js finds no tokens, clears the hash, and the app opens looking perfectly
+// normal — the same screen as a link that worked. Whoever followed it is left guessing.
+const emailLinkError = (() => {
+  const hash = (location.hash || '').slice(1);
+  if (!hash.includes('error')) return '';
+  return new URLSearchParams(hash).get('error_description') || '';
+})();
+
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 let currentUser = null;
 const currentVoterId = () => (currentUser ? currentUser.id : null);
@@ -477,13 +487,35 @@ map.on('moveend', loadLighting);
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 
+// How often the client re-asks. Not only for freshness: this ran exactly once, at page load, so a
+// single dropped connection meant no police layer AND no proximity warning for as long as the app
+// stayed open — and a walk home is exactly when the app has been open for a while.
+const POLICE_REFRESH_MS = 5 * 60 * 1000;
+
+// The layer's own line in the map key, and the fifth instance in this project of the same bug: a
+// failure that is indistinguishable from good news. "No police reports near you" and "we could not
+// find out whether there are any" looked identical — both were a map with no red on it — and the
+// second one is the reassuring reading of the two, which is the wrong way for a safety app to fail.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Police reports — checking…',
+    ok: `Police report (recent)${count ? ` — ${count} here` : ''}`,
+    none: 'Police reports — none active nearby',
+    failed: 'Police reports — could not be loaded',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadPoliceEvents() {
-  if (!sb) return;   // the pins path reports this; one banner is enough
+  if (!sb) { setPoliceLegend('failed'); return; }   // the pins path reports this; one banner is enough
+  setPoliceLegend('loading');
   const { data, error } = await sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) { setPoliceLegend('failed'); return; }
 
   policeEvents = data
     .map((r) => {
@@ -491,6 +523,7 @@ async function loadPoliceEvents() {
       return p ? { ...r, lat: p.lat, lng: p.lng } : null;
     })
     .filter(Boolean);
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
   renderPoliceEvents();
   checkPoliceProximity();
 }
@@ -1752,6 +1785,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
   setLoadingStatus(status, 'Locating your route…');
   activeRouteCoords = null;
   routeFeedbackEl.hidden = true;
+  document.getElementById("startWalkBtn").hidden = true;
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
@@ -1892,6 +1926,8 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       });
       activeRouteCoords = entries[rank].coords;
       routeFeedbackEl.hidden = false;
+      // Offered only once a route is on the map, because walk mode has nothing to follow without one.
+      document.getElementById("startWalkBtn").hidden = false;
       if (fitView) {
         if (!keepSheetOpen) closeSheets();
         map.fitBounds(entries[rank].poly.getBounds(), { padding: [40, 40] });
@@ -2278,9 +2314,13 @@ function renderMyReports() {
   list.innerHTML = '';
   const mine = pins.filter((p) => p.own).sort((a, b) => b.createdAt - a.createdAt);
   if (!mine.length) {
-    list.innerHTML = currentUser
-      ? '<p class="sheet-sub">You haven’t added any ratings yet — tap the map to rate a spot, or press and hold to mark an area.</p>'
-      : '<p class="sheet-sub">Sign in to start adding ratings. They’ll follow your account, so they show up on every device you use.</p>';
+    // "You haven't added any ratings yet" is a claim about the person. Only make it when the fetch
+    // that would have found them actually succeeded.
+    list.innerHTML = !currentUser
+      ? '<p class="sheet-sub">Sign in to start adding ratings. They’ll follow your account, so they show up on every device you use.</p>'
+      : myHistoryIncomplete
+        ? '<p class="sheet-sub">Couldn’t load your ratings just now — this list may be incomplete. Reopen it once you have a connection.</p>'
+        : '<p class="sheet-sub">You haven’t added any ratings yet — tap the map to rate a spot, or press and hold to mark an area.</p>';
     return;
   }
   mine.forEach((p) => {
@@ -2563,11 +2603,31 @@ function renderAccountState() {
   if (pw) pw.hidden = !currentUser;
 }
 
-// ---------- Changing your password ----------
-// Asking for the current password is not ceremony. Supabase will happily change a password from an
-// existing session alone, and this app is opened one-handed, on an unlocked phone, at night — the
-// case where someone else has your phone is exactly the case this has to survive. Verifying the old
-// password first means a stolen unlocked phone cannot lock you out of your own account.
+// ---------- Passwords ----------
+// Two ways in, one set of rules. Changing your password asks for the current one first: Supabase
+// will happily change it from an existing session alone, and this app is opened one-handed, on an
+// unlocked phone, at night — somebody else holding that phone is exactly the case this has to
+// survive, so a stolen unlocked phone must not be able to lock the owner out. Resetting by email
+// skips that check, because following the emailed link already proves you control the address.
+//
+// Set by the PASSWORD_RECOVERY event, cleared once a new password is saved or the session ends.
+// While it is true, Profile stops asking for the old password — otherwise someone who arrived by
+// reset link and dismissed the sheet would be signed in, unable to remember their password, and
+// facing a form that demands it: a dead end reachable in one tap.
+let inPasswordRecovery = false;
+
+// Returns a message to show, or '' when the pair is acceptable. Shared so the two forms can never
+// drift into disagreeing about what a valid password is.
+function newPasswordProblem(next, again, current) {
+  if (!next) return 'Choose a new password.';
+  // Supabase's own minimum. Checking here catches a typo before a round-trip, and names the rule
+  // instead of echoing a server error.
+  if (next.length < 6) return 'Your new password needs at least 6 characters.';
+  if (next !== again) return 'The two new passwords do not match.';
+  if (current && next === current) return 'That is already your password.';
+  return '';
+}
+
 function resetPasswordForm() {
   const form = document.getElementById('passwordForm');
   const showBtn = document.getElementById('showPasswordFormBtn');
@@ -2579,12 +2639,17 @@ function resetPasswordForm() {
     if (el) el.value = '';
   });
   document.getElementById('passwordStatus').textContent = '';
+  // After a reset link there is no old password to give, so the field is not merely optional —
+  // showing it would be asking for something the person came here precisely because they lack.
+  const currentField = document.getElementById('currentPassword');
+  currentField.hidden = inPasswordRecovery;
+  showBtn.textContent = inPasswordRecovery ? 'Set a new password' : 'Change my password';
 }
 
 document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
   document.getElementById('showPasswordFormBtn').hidden = true;
   document.getElementById('passwordForm').hidden = false;
-  document.getElementById('currentPassword').focus();
+  document.getElementById(inPasswordRecovery ? 'newPassword' : 'currentPassword').focus();
 });
 
 document.getElementById('cancelPasswordBtn').addEventListener('click', resetPasswordForm);
@@ -2598,31 +2663,97 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
   const next = document.getElementById('newPassword').value;
   const again = document.getElementById('confirmPassword').value;
 
-  if (!current || !next) { statusEl.textContent = 'Fill in your current and new password.'; return; }
-  // Supabase's own minimum. Checking it here means a typo is caught before a round-trip, and the
-  // message names the rule instead of echoing a server error.
-  if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
-  if (next !== again) { statusEl.textContent = 'The two new passwords do not match.'; return; }
-  if (next === current) { statusEl.textContent = 'That is already your password.'; return; }
+  if (!inPasswordRecovery && !current) { statusEl.textContent = 'Enter your current password.'; return; }
+  const problem = newPasswordProblem(next, again, inPasswordRecovery ? '' : current);
+  if (problem) { statusEl.textContent = problem; return; }
 
-  setLoadingStatus(statusEl, 'Checking your current password…');
-  // Re-signing in with the same account refreshes the session rather than replacing the user, so
-  // nothing on the map changes. A wrong password fails here and leaves the old one in place.
-  const { error: reauthError } = await sb.auth.signInWithPassword({
-    email: currentUser.email,
-    password: current,
-  });
-  if (reauthError) {
-    statusEl.textContent = 'That current password is not right.';
-    return;
+  if (!inPasswordRecovery) {
+    setLoadingStatus(statusEl, 'Checking your current password…');
+    // Re-signing in with the same account refreshes the session rather than replacing the user, so
+    // nothing on the map changes. A wrong password fails here and leaves the old one in place.
+    const { error: reauthError } = await sb.auth.signInWithPassword({
+      email: currentUser.email,
+      password: current,
+    });
+    if (reauthError) { statusEl.textContent = 'That current password is not right.'; return; }
   }
 
   setLoadingStatus(statusEl, 'Saving your new password…');
   const { error } = await sb.auth.updateUser({ password: next });
   if (error) { statusEl.textContent = error.message; return; }
 
+  inPasswordRecovery = false;
   resetPasswordForm();
   showToast('Password changed.');
+  buzz();
+});
+
+// ---------- Forgot your password ----------
+// Where any emailed link comes back to. Sending the current page rather than a hardcoded address
+// means this works from a local build, from GitHub Pages, and from anywhere else the app is ever
+// hosted — but each of those origins has to be listed under Redirect URLs in the Supabase
+// dashboard, or Supabase falls back to the project's Site URL instead.
+//
+// That fallback is why every email this app can send must pass this explicitly. The sign-up
+// confirmation did not, from the day accounts shipped until 2026-09-08, so Supabase used the Site
+// URL — still on its `http://localhost:3000` default — and every new user who tapped "confirm your
+// email" on their phone landed on a page that does not exist. Nothing in the app could see that:
+// from here a sign-up that is never confirmed and one that is confirmed onto a dead page look
+// exactly the same.
+function appRedirectUrl() {
+  return location.origin + location.pathname.replace(/index\.html$/, '');
+}
+
+document.getElementById('authForgotBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('authStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to reset your password.'; return; }
+  const email = document.getElementById('authEmail').value.trim();
+  if (!email) { statusEl.textContent = 'Type your email address above first, then tap this again.'; return; }
+
+  setLoadingStatus(statusEl, 'Sending your reset link…');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appRedirectUrl() });
+  // Deliberately the same message either way. Saying "no account with that email" would turn this
+  // button into a way to test whether any given person uses SafeWalk — and on this app, that leaks
+  // something about where they walk.
+  if (error && !/rate|limit|too many/i.test(error.message)) {
+    statusEl.textContent = 'If there is an account for that address, a reset link is on its way. Check your spam folder too.';
+    return;
+  }
+  statusEl.textContent = error
+    ? 'Too many attempts just now. Wait a minute and try again.'
+    : 'If there is an account for that address, a reset link is on its way. Check your spam folder too. Open it on this device.';
+});
+
+function openNewPasswordSheet() {
+  ['resetPassword', 'resetPasswordAgain'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('resetStatus').textContent = '';
+  openSheet('newPasswordSheet');
+}
+
+document.getElementById('saveResetPasswordBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('resetStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish this.'; return; }
+  const next = document.getElementById('resetPassword').value;
+  const again = document.getElementById('resetPasswordAgain').value;
+
+  const problem = newPasswordProblem(next, again, '');
+  if (problem) { statusEl.textContent = problem; return; }
+
+  setLoadingStatus(statusEl, 'Saving your new password…');
+  const { error } = await sb.auth.updateUser({ password: next });
+  // The commonest failure here is a link that has already expired or been used, and Supabase's own
+  // wording for it is opaque. Say what to do instead.
+  if (error) {
+    statusEl.textContent = /session|expired|invalid|jwt/i.test(error.message)
+      ? 'That reset link has expired. Ask for a new one from the sign-in screen.'
+      : error.message;
+    return;
+  }
+
+  inPasswordRecovery = false;
+  resetPasswordForm();
+  closeSheets();
+  showToast('Password changed. You are signed in.');
   buzz();
 });
 
@@ -2669,6 +2800,9 @@ function setAuthMode(mode) {
     ? 'New here? Create an account'
     : 'Already have an account? Sign in';
   document.getElementById('authPassword').autocomplete = signin ? 'current-password' : 'new-password';
+  // Nothing to recover on the way to a brand-new account, and offering it there invites people to
+  // ask for a reset link for an address that has never signed up.
+  document.getElementById('authForgotBtn').hidden = !signin;
   // When a write action sent us here, lead with what the sign-in is actually for.
   document.getElementById('authStatus').textContent = authReason ? `Sign in ${authReason}.` : '';
 }
@@ -2705,7 +2839,8 @@ document.getElementById('authSubmitBtn').addEventListener('click', async () => {
   setLoadingStatus(statusEl, authMode === 'signin' ? 'Signing in…' : 'Creating your account…');
   const { data, error } = authMode === 'signin'
     ? await sb.auth.signInWithPassword({ email, password })
-    : await sb.auth.signUp({ email, password });
+    // emailRedirectTo, or the confirmation link goes to the project's Site URL — see appRedirectUrl().
+    : await sb.auth.signUp({ email, password, options: { emailRedirectTo: appRedirectUrl() } });
 
   if (error) { statusEl.textContent = error.message; return; }
 
@@ -2825,6 +2960,9 @@ function hideStaleBanner() {
 const PIN_FETCH_RADIUS_M = 5000;
 const PIN_REFETCH_AFTER_M = 2000;
 let lastPinFetchAt = null; // { lat, lng }
+// True when the own-pins or votes fetch failed, so "My reports" and the vote state are known to be
+// incomplete rather than known to be empty. The difference is the whole point.
+let myHistoryIncomplete = false;
 
 function pinFetchCentre() {
   // Prefer the person's actual position; fall back to whatever they are looking at.
@@ -2884,6 +3022,14 @@ async function refreshPinsFromCloud({ force = false } = {}) {
     }
     return;
   }
+
+  // The other two legs were never checked. Neither breaks the map, and that is exactly why they went
+  // unnoticed — they quietly change what the app tells you about YOURSELF. A failed own-pins fetch
+  // leaves own.data undefined, so "My reports & marks" renders its empty state and says "You haven't
+  // added any ratings yet" to someone who has; a failed votes fetch leaves votedIds empty, so pins
+  // you already rated invite you to rate them again, and the database refuses on submit. Both state
+  // a falsehood confidently rather than admitting a gap. Spotted by the hourly agent, PR #13.
+  myHistoryIncomplete = !!(own.error || votes.error);
 
   hideStaleBanner();
   lastPinFetchAt = centre;
@@ -2993,8 +3139,18 @@ async function persistVote(pinId, rating, note) {
 
 if (sb) {
   // Fires on load with the restored session too, so this is also how the map gets its first fill.
-  sb.auth.onAuthStateChange(async (_event, session) => {
+  sb.auth.onAuthStateChange(async (event, session) => {
     currentUser = session ? session.user : null;
+    // Arriving from a reset link. Supabase has already turned the token in the URL into a real
+    // session by this point, so without this the link would just sign someone in and leave them
+    // exactly where they started: unable to remember the password, with no way to set a new one.
+    if (event === 'PASSWORD_RECOVERY') {
+      inPasswordRecovery = true;
+      resetPasswordForm();
+      openNewPasswordSheet();
+    } else if (event === 'SIGNED_OUT') {
+      inPasswordRecovery = false;
+    }
     renderAccountState();
     // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
     // though the location has not moved.
@@ -3002,6 +3158,198 @@ if (sb) {
     refreshStanding();
   });
 }
+
+
+// ---------- Walk mode ----------
+// Rating a street from an armchair and rating it while walking down it are different problems. At
+// home the hard part is WHERE — you tap a map, aim at a road, choose spot or street. While walking,
+// the app already knows where you are, so the only thing left to say is how it felt. That is one
+// bit, and it should cost one press: no aiming, no reading, no precision.
+//
+// Three decisions follow from that, and none of them are cosmetic.
+//
+// A mark covers the stretch just walked, not a point. Nobody stops mid-street to rate it — you keep
+// going and reach for the phone once you are past, so a point dropped at the moment of the tap is
+// already tens of metres wrong and says the wrong thing. WALK_MARK_SPAN_M of route behind you is
+// both what you meant and what survives a GPS fix that is 20m out.
+//
+// A press votes on an existing pin wherever there is one, and only creates a new pin when there is
+// not. That is better evidence — agreement concentrates instead of scattering — and it is also the
+// stronger privacy position: votes are readable only by their author, so a walk through a
+// well-covered area leaves nothing new on the public map at all.
+//
+// A press is not written for WALK_UNDO_MS. A misfire in your pocket is likelier than a considered
+// tap here, and an undo that has to reach the database to take something back is an undo that
+// leaves a trace. Anything still pending is flushed the moment the page is hidden, so locking the
+// phone commits the mark rather than losing it.
+const WALK_MARK_SPAN_M = 100;
+const WALK_UNDO_MS = 4000;
+// Beyond this, "the stretch you just walked" is not a stretch of the route at all. Marking anyway
+// would put someone's warning on a street they were nowhere near.
+const WALK_OFF_ROUTE_M = 120;
+
+let walkState = null;
+
+function walkBarEl() { return document.getElementById('walkBar'); }
+function setWalkStatus(text) { document.getElementById('walkStatus').textContent = text; }
+
+function startWalk() {
+  if (!activeRouteCoords || activeRouteCoords.length < 2) {
+    showToast('Pick a route first, then start walking it.');
+    return;
+  }
+  // Asked for now rather than at the first press: being bounced to a sign-in sheet mid-street, one
+  // handed, is exactly the moment not to ask.
+  if (!requireAccount('to mark streets while you walk')) return;
+
+  walkState = { coords: activeRouteCoords, index: 0, marked: 0, pending: null, timer: null, watchId: null };
+  closeSheets();
+  walkBarEl().hidden = false;
+  document.querySelector('.bottom-bar').hidden = true;
+  setWalkStatus('Walking — tap either button for the stretch you just passed');
+
+  if (navigator.geolocation) {
+    walkState.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!walkState) return;
+        userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        updateUserMarker(userLocation.lat, userLocation.lng, pos.coords.accuracy);
+        // From the last known index forward: a route that doubles back past its own start would
+        // otherwise snap the return leg onto the outbound one and mark the wrong half.
+        const p = routeProgress(walkState.coords, userLocation.lat, userLocation.lng, walkState.index);
+        if (p) { walkState.index = p.index; walkState.offRouteM = p.offRouteM; walkState.hasFix = true; }
+      },
+      () => {
+        // Never over the undo line: that message is time-limited and is the only way back from a
+        // misfire, and a location warning that erases it costs more than it explains.
+        if (walkState && !walkState.pending) setWalkStatus('Waiting for your location — marks are paused until it arrives.');
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+  }
+}
+
+function finishWalk({ silent = false } = {}) {
+  if (!walkState) return;
+  flushWalkMark();
+  if (walkState.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(walkState.watchId);
+  const marked = walkState.marked;
+  walkState = null;
+  walkBarEl().hidden = true;
+  document.querySelector('.bottom-bar').hidden = false;
+  if (silent) return;
+  // Most people will not have touched the phone at all on the way. The whole-route verdict is the
+  // one question that still catches them, so land on it rather than on the map.
+  openSheet('routeSheet');
+  document.getElementById('routeFeedback').scrollIntoView({ block: 'center' });
+  showToast(marked
+    ? `Walk finished — ${marked} stretch${marked === 1 ? '' : 'es'} marked. How was the route overall?`
+    : 'Walk finished. How was the route overall?');
+}
+
+// Writes the pending mark for real. Called by the undo timer, by anything that supersedes it, and
+// by the page-hidden handler — so a mark is never lost to a locked screen, only ever to a
+// deliberate undo.
+function flushWalkMark() {
+  if (!walkState || !walkState.pending) return;
+  const mark = walkState.pending;
+  walkState.pending = null;
+  clearTimeout(walkState.timer);
+  walkState.timer = null;
+
+  const mid = pathMidpoint(mark.path);
+  const existing = mid ? findNearbyPin(mid.lat, mid.lng, 60) : null;
+  const voterId = currentVoterId();
+
+  if (existing) {
+    if ((existing.voters || []).includes(voterId)) {
+      // Marks span WALK_MARK_SPAN_M and match within 60m of their middle, so two presses less than
+      // about 60m apart are describing the same stretch. One rating per person per stretch is the
+      // rule everywhere else in the app and it holds here — but the bar has to say so, or a press
+      // that changes nothing reads as a press that did not register.
+      setWalkStatus(existing.own
+        ? 'Already marked this stretch — walk on a little and tap again for the next one.'
+        : 'You rated this stretch before, so it still counts once.');
+      return;
+    }
+    if (mark.rating === 'safe') existing.safe++; else existing.danger++;
+    existing.voters = [...(existing.voters || []), voterId];
+    if (!existing.own) recordRouteJudgement([existing.id], mark.rating);
+    persistVote(existing.id, mark.rating, '');
+  } else {
+    const pin = {
+      id: 'p-' + Math.random().toString(36).slice(2),
+      lat: mid.lat,
+      lng: mid.lng,
+      paths: [mark.path],
+      streetName: undefined,
+      safe: mark.rating === 'safe' ? 1 : 0,
+      danger: mark.rating === 'danger' ? 1 : 0,
+      notes: [],
+      createdAt: Date.now(),
+      own: true,
+      source: 'route',
+      creatorRating: mark.rating,
+      creatorNote: '',
+      voters: [voterId],
+    };
+    pins.push(pin);
+    persistCreate(pin);
+  }
+  walkState.marked++;
+  renderPins();
+}
+
+function undoWalkMark() {
+  if (!walkState || !walkState.pending) return;
+  clearTimeout(walkState.timer);
+  walkState.pending = null;
+  walkState.timer = null;
+  setWalkStatus('Taken back. Nothing was saved.');
+  buzz(10);
+}
+
+function markWalk(rating) {
+  if (!walkState) return;
+  // Without a fix, walkState.index is still 0 — so a press here would quietly mark the START of the
+  // route as though you had walked it, which is a false warning on a street you may never have set
+  // foot on. Refusing and saying why is the only honest option; this app must not invent evidence.
+  if (!walkState.hasFix) {
+    setWalkStatus('No location fix yet, so there is no stretch to mark. Nothing was saved.');
+    return;
+  }
+  if (walkState.offRouteM != null && walkState.offRouteM > WALK_OFF_ROUTE_M) {
+    setWalkStatus(`You are about ${Math.round(walkState.offRouteM)}m off this route — rejoin it to mark a stretch.`);
+    return;
+  }
+  const path = trailingRouteSegment(walkState.coords, walkState.index, WALK_MARK_SPAN_M);
+  if (!path) { setWalkStatus('Not enough of the route walked yet to mark a stretch.'); return; }
+
+  // A second press supersedes the first rather than queuing behind it: two taps inside the undo
+  // window is someone correcting themselves, not someone marking two stretches of the same 100m.
+  if (walkState.pending) undoWalkMark();
+  walkState.pending = { rating, path };
+  setWalkStatus(rating === 'safe' ? 'Marked as fine — tap here to undo' : 'Marked as off — tap here to undo');
+  document.getElementById('walkStatus').classList.add('walk-undoable');
+  buzz(rating === 'safe' ? 15 : 30);
+  walkState.timer = setTimeout(() => {
+    flushWalkMark();
+    if (!walkState) return;
+    document.getElementById('walkStatus').classList.remove('walk-undoable');
+    setWalkStatus('Saved. Keep going — tap again whenever it changes.');
+  }, WALK_UNDO_MS);
+}
+
+document.getElementById('startWalkBtn').addEventListener('click', startWalk);
+document.getElementById('walkFineBtn').addEventListener('click', () => markWalk('safe'));
+document.getElementById('walkOffBtn').addEventListener('click', () => markWalk('danger'));
+document.getElementById('walkFinishBtn').addEventListener('click', () => finishWalk());
+document.getElementById('walkStatus').addEventListener('click', undoWalkMark);
+
+// A locked screen or a switched app must commit what is pending, not drop it. pagehide is the one
+// that actually fires when a phone browser is backgrounded; visibilitychange covers the rest.
+window.addEventListener('pagehide', flushWalkMark);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushWalkMark(); });
 
 // ---------- Init ----------
 renderAccountState();
@@ -3013,8 +3361,21 @@ renderPins();
 locate(true);
 loadLighting();
 loadPoliceEvents();
+// One fetch at startup used to be the whole story: a dropped connection meant no police layer and
+// no proximity warning until the app was reopened, which on a walk home may be never.
+setInterval(loadPoliceEvents, POLICE_REFRESH_MS);
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
+// Captured before the Supabase client was built; said out loud here, once the app is on screen.
+if (emailLinkError) {
+  const expired = /expired|invalid|already/i.test(emailLinkError);
+  setTimeout(() => showToast(
+    expired
+      ? 'That email link has expired or was already used. Ask for a new one from the sign-in screen.'
+      : emailLinkError,
+    6000,
+  ), 900);
+}
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);
 // Re-check at fire time, not just at schedule time — if the user already dismissed onboarding, or
 // is already mid-action (say, they tapped the map to rate a spot before this timer fired), don't

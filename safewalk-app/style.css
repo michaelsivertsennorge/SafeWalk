@@ -1106,3 +1106,61 @@ a:focus-visible {
 .near-head { font-size: 13.5px; font-weight: 650; }
 .near-sub { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
 .near-note { font-size: 12px; margin-top: 5px; line-height: 1.4; }
+
+/* Walk mode: the bar you use while actually walking the route.
+   Sits exactly where the bottom bar sits and replaces it, so the thumb goes to the same place it
+   already knows. Two targets, full width, 72px tall — deliberately larger than the 44px minimum,
+   because this is pressed while moving, one-handed, often without looking at the screen. */
+.walk-bar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 520;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(var(--scrim),0.98), rgba(var(--scrim),0.9));
+  border-top: 1px solid var(--border);
+}
+.walk-status {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.35;
+  min-height: 17px;
+}
+.walk-actions { display: flex; gap: 10px; }
+.walk-btn {
+  flex: 1;
+  min-height: 72px;
+  border-radius: 16px;
+  border: 1.5px solid var(--border);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+/* Muted on purpose. A press must not announce itself across a dark street: no flash, no colour
+   change, no growing tick. The confirmation someone actually needs while walking is the haptic
+   buzz and the undo line, both of which reach them without reaching anyone watching. */
+.walk-btn:active { transform: scale(0.99); }
+.walk-fine { background: color-mix(in srgb, var(--safe) 18%, var(--bg-elev-2)); color: var(--text); }
+.walk-off  { background: color-mix(in srgb, var(--danger) 18%, var(--bg-elev-2)); color: var(--text); }
+.walk-finish {
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+/* The status line doubles as the undo target while a mark is pending — the only thing on this bar
+   that changes appearance, and only to say "you can still take that back". */
+.walk-status.walk-undoable {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 0;
+}

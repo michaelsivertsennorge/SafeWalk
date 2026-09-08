@@ -27,7 +27,7 @@
     <div class="legend-row"><span class="legend-line line-safe"></span>&gt;75% safe (solid)</div>
     <div class="legend-row"><span class="legend-line line-mixed"></span>Mixed (dashed)</div>
     <div class="legend-row"><span class="legend-line line-danger"></span>&gt;50% unsafe (dotted)</div>
-    <div class="legend-row"><span class="legend-police"></span>Police report (recent)</div>
+    <div class="legend-row"><span class="legend-police"></span><span id="legendPolice" class="legend-muted">Police reports — checking…</span></div>
     <p class="legend-note">Line style backs up color, so it still reads if you're colorblind.</p>
   </div>
 
@@ -61,6 +61,20 @@
       <line x1="19" y1="12" x2="22" y2="12"></line>
     </svg>
   </button>
+
+  <!-- Walk mode. Replaces the bottom bar while a route is being walked, in the same place, because
+       this is operated one-handed, in the dark, without looking: two fixed targets and nothing to
+       aim at. It deliberately does not flash or change colour on a press — someone marking the
+       stretch they are on may be walking past the reason they are marking it, and a screen that
+       lights up red announces what they just did. The confirmation is a haptic tick. -->
+  <div class="walk-bar" id="walkBar" hidden>
+    <div class="walk-status" id="walkStatus" aria-live="polite">Walking — tap either button for the stretch you just passed</div>
+    <div class="walk-actions">
+      <button class="walk-btn walk-fine" id="walkFineBtn">Felt fine</button>
+      <button class="walk-btn walk-off" id="walkOffBtn">Felt off</button>
+    </div>
+    <button class="walk-finish" id="walkFinishBtn">Finish walk</button>
+  </div>
 
   <nav class="bottom-bar">
     <button class="bb-btn bb-route" id="routeBtn">Safe Route</button>
@@ -168,6 +182,7 @@
     <button class="btn btn-primary btn-block" id="findRouteBtn">Find safest route</button>
     <div id="routeStatus" class="route-status" aria-live="polite"></div>
     <div id="routeResults" class="route-results"></div>
+    <button class="btn btn-primary btn-block" id="startWalkBtn" hidden>🚶 Start walking this route</button>
     <div class="route-feedback" id="routeFeedback" hidden>
       <p class="sheet-label">Actually walked or biked this route? Tell us how the selected one felt</p>
       <div class="rating-choice">
@@ -386,7 +401,25 @@
     <input id="authPassword" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password (min. 6 characters)" />
     <p class="sheet-sub" id="authStatus" aria-live="polite"></p>
     <button class="btn btn-primary btn-block" id="authSubmitBtn">Sign in</button>
+    <button class="btn btn-ghost btn-block" id="authForgotBtn">Forgot your password?</button>
     <button class="btn btn-ghost btn-block" id="authToggleModeBtn">New here? Create an account</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Set a new password, reached from the emailed reset link. Opening that link signs you in
+       already, so this sheet does not ask for the old password: following the link is the proof
+       that you control the address, which is the whole point of a reset. -->
+  <section class="sheet" id="newPasswordSheet" role="dialog" aria-modal="true" aria-labelledby="newPasswordSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="newPasswordSheetTitle">Set a new password</h2>
+    <p class="sheet-sub" id="newPasswordIntro">You followed a reset link, so you are signed in. Choose a new password now.</p>
+    <input id="resetPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
+    <input id="resetPasswordAgain" type="password" autocomplete="new-password" aria-label="Repeat new password" placeholder="Repeat new password" />
+    <p class="sheet-sub" id="resetStatus" aria-live="polite"></p>
+    <button class="btn btn-primary btn-block" id="saveResetPasswordBtn">Save new password</button>
+    <p class="sheet-sub sheet-fineprint">If you close this without setting one, your old password still works — and Profile will offer this again while the link is still good.</p>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>
