@@ -86,9 +86,16 @@ all, in the Supabase dashboard under Authentication → URL Configuration:
 If either is wrong the email still arrives and the link still works — it just lands somewhere that
 is not SafeWalk, which looks like the reset silently failing.
 
-Still open here:
-- No rate-limit feedback beyond a generic retry message, and Supabase's own limit on reset emails is
-  per-hour. Someone tapping twice will be told to wait a minute, which may understate it.
+**The rate-limit message understated the wait — fixed 2026-09-08.** This entry used to say the
+reset button's rate-limit reply was "wait a minute", while Supabase's own email-sending limit is
+per-hour — a confident wrong claim about how long the wait actually is, the exact failure mode this
+file exists to catch, just in wording rather than in a missing fetch. Someone hitting the limit and
+believing "a minute" would retry into the same limit, possibly for the rest of the hour, each time
+being told the same false thing. It now says sending is limited to a few per hour and to wait rather
+than retry right away, without inventing a precise figure this file cannot verify (the exact number
+is a per-project Supabase setting, not something visible from here). **Not verified against a real
+rate limit** — no Supabase access from this environment — this is a wording correction against the
+documented behaviour already recorded above, not a new test of Supabase's throttling itself.
 
 ### Walk mode — **done, 2026-09-08**
 Asked for by the owner, from the right observation: the app was built for marking places from a map,
