@@ -200,6 +200,42 @@ html, body {
   background: var(--map-bg);
 }
 
+.fatal-error {
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.fatal-error-box {
+  max-width: 360px;
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 22px;
+}
+
+.fatal-error-icon {
+  font-size: 32px;
+}
+
+.fatal-error-box h2 {
+  margin: 10px 0 8px;
+  font-size: 18px;
+}
+
+.fatal-error-box p {
+  margin: 0 0 18px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .map-hint {
   position: absolute;
   top: 60px;
