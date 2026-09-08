@@ -2780,7 +2780,52 @@ function renderAccountState() {
   // There is no password to change without an account, and offering one would be a dead end.
   const pw = document.getElementById('passwordSection');
   if (pw) pw.hidden = !currentUser;
+  const del = document.getElementById('deleteAccountBtn');
+  if (del) del.hidden = !currentUser;
 }
+
+document.getElementById('privacyBtn').addEventListener('click', () => openSheet('privacySheet'));
+
+// Erasure, which the app owed and could not do until the delete-account function existed. The
+// wording below is the whole point: a deletion that quietly leaves things behind is not a deletion,
+// so what survives is said before the confirmation, not discovered afterwards.
+document.getElementById('deleteAccountBtn').addEventListener('click', onceAtATime(async () => {
+  const statusEl = document.getElementById('deleteAccountStatus');
+  if (!currentUser || !sb) return;
+
+  const ok = await showConfirm(
+    'This deletes your account and email, your votes, your incident reports and your walks. '
+    + 'Your street ratings stay on the map but are permanently unlinked from you, so other people '
+    + 'keep the warnings. It cannot be undone.',
+    { okLabel: 'Delete my account', title: 'Delete your account?' },
+  );
+  if (!ok) { openProfile(); return; }
+
+  openProfile();
+  setLoadingStatus(statusEl, 'Deleting your account…');
+  const { data: session } = await sb.auth.getSession();
+  const token = session && session.session ? session.session.access_token : null;
+  if (!token) { statusEl.textContent = 'You are not signed in any more — sign in and try again.'; return; }
+
+  const { error } = await settled((async () => {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/delete-account', {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Your session has expired. Sign in again, then delete.' : 'Could not delete the account.');
+    return {};
+  })(), 'delete your account');
+
+  if (error) { statusEl.textContent = error.message; return; }
+
+  // The account is gone server-side; clear the session locally so the app does not keep acting as
+  // somebody who no longer exists.
+  await settled(sb.auth.signOut({ scope: 'local' }), 'sign out');
+  currentUser = null;
+  renderAccountState();
+  closeSheets();
+  showToast('Your account has been deleted.', 5000);
+}));
 
 // ---------- Passwords ----------
 // Two ways in, one set of rules. Changing your password asks for the current one first: Supabase

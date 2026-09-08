@@ -374,6 +374,58 @@
 
     <hr class="divider" />
     <button class="btn btn-ghost btn-block" id="clearDataBtn">Clear my data on this device</button>
+    <button class="btn btn-ghost btn-block" id="privacyBtn">What SafeWalk knows about you</button>
+    <!-- Erasure. Only shown with an account, because there is nothing to delete without one. -->
+    <button class="btn btn-danger btn-block" id="deleteAccountBtn" hidden>Delete my account</button>
+    <p class="sheet-sub" id="deleteAccountStatus" aria-live="polite"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-back>‹ My Page</button>
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Written from the schema rather than from memory: every claim here was checked against the
+       actual tables and the actual network calls before it was written down. -->
+  <section class="sheet" id="privacySheet" role="dialog" aria-modal="true" aria-labelledby="privacyTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="privacyTitle">What SafeWalk knows about you</h2>
+
+    <p class="sheet-label">Shown to everyone</p>
+    <p class="sheet-sub">Your street and area ratings, and any note you attach to them. Your incident
+      reports: what happened, where, and roughly when. <strong>Never your name, email or account</strong>
+      — there is no way for anyone to see who made a mark, or to group marks by who made them.</p>
+
+    <p class="sheet-label">Only you can see it</p>
+    <p class="sheet-sub">Your email address. Which places you have voted on. Your reporter standing
+      and the record of who agreed with your marks. Nobody else can read any of it.</p>
+
+    <p class="sheet-label">Kept only on this phone</p>
+    <p class="sheet-sub">Your emergency contacts and their numbers — these are never uploaded
+      anywhere. Your theme and settings, the last map you loaded, and any marks waiting to upload.</p>
+
+    <p class="sheet-label">While someone is watching your walk</p>
+    <p class="sheet-sub">Only your <strong>latest</strong> position is stored, replaced each time it
+      updates — there is no record of the path you took. Anyone holding the link can see it until
+      the walk ends, and the whole thing is deleted after twelve hours.</p>
+
+    <p class="sheet-label">How old things look to other people</p>
+    <p class="sheet-sub">Other people see your ratings dated by the day, and incident reports by the
+      hour — never the minute. That is deliberate: exact times let anyone reading the public map
+      reconstruct a person's walk home from a line of marks.</p>
+
+    <p class="sheet-label">Other companies involved</p>
+    <p class="sheet-sub">The map, routing, address search and street data come from OpenStreetMap,
+      Valhalla, Nominatim and Statens vegvesen; your account and marks are stored by Supabase; the
+      app itself is served by GitHub. Those services necessarily see the area you are looking at.
+      <strong>There is no advertising, no analytics and no tracking of any kind</strong> — the app
+      does not measure what you do.</p>
+
+    <p class="sheet-label">Getting rid of it</p>
+    <p class="sheet-sub">Delete any mark from “My reports &amp; marks”. Delete your whole account from
+      Profile: that removes your account, your votes, your incident reports and your walks. Your
+      street ratings stay on the map, permanently unlinked from you, so the warnings other people
+      rely on do not disappear.</p>
+
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-back>‹ My Page</button>
       <button class="btn btn-ghost" data-close>Close</button>
