@@ -3886,6 +3886,7 @@ document.getElementById('startWatchedWalkBtn').addEventListener('click', onceAtA
   if (error) { showToast('Could not start a watched walk: ' + error.message); return; }
 
   watchedWalk = { id: data.id, token: data.share_token };
+  walkAlarmPending = false;   // a stale retry from a previous walk must never touch this one
   document.getElementById('walkShareLink').value = walkShareUrl(data.share_token);
   document.getElementById('walkShareStatus').textContent = '';
   offerSmsToContact(data.share_token);
@@ -3987,6 +3988,7 @@ async function endWatchedWalk(status) {
   if (!watchedWalk) return;
   const id = watchedWalk.id;
   watchedWalk = null;
+  walkAlarmPending = false;   // nothing left to retry against once the walk is over
   cancelWalkAlarm();
   keepAwake(false);
   document.getElementById('walkWatchedStrip').hidden = true;
@@ -3999,6 +4001,9 @@ async function endWatchedWalk(status) {
 // needs no unlocking.
 let walkIdleTimer = null;
 let alarmCountdown = null;
+// Set when raiseWalkAlarm() could not reach the server. This is the one write in the app where
+// staying quiet about a failure is not an option — see raiseWalkAlarm() below.
+let walkAlarmPending = false;
 
 function noteWalkMovement() {
   if (!watchedWalk) return;
@@ -4008,7 +4013,11 @@ function noteWalkMovement() {
 function startWalkIdleWatch() {
   clearInterval(walkIdleTimer);
   walkIdleTimer = setInterval(() => {
-    if (!watchedWalk || alarmCountdown) return;
+    if (!watchedWalk) return;
+    // A failed alarm write is retried here every 30s rather than waiting for the walker to move
+    // again (which resets the idle clock) or for another ten minutes of stillness to elapse.
+    if (walkAlarmPending) { raiseWalkAlarm(true); return; }
+    if (alarmCountdown) return;
     const since = Date.now() - (watchedWalk.lastMovedAt || Date.now());
     if (since >= WALK_IDLE_MS) beginWalkAlarmCountdown();
   }, 30000);
@@ -4042,19 +4051,44 @@ function cancelWalkAlarm() {
   if (watchedWalk) watchedWalk.lastMovedAt = Date.now();
 }
 
-async function raiseWalkAlarm() {
-  if (!watchedWalk) return;
-  await settled(sb.from('walks').update({ status: 'alarm', updated_at: new Date().toISOString() })
+// isRetry is true when this is an automatic retry of a write that failed the first time (from the
+// 30s idle-watch tick, or the 'online' listener below) — it suppresses the toast/buzz so a phone
+// with a flaky signal does not get one every 30 seconds, without changing what is actually sent.
+async function raiseWalkAlarm(isRetry = false) {
+  if (!watchedWalk) { walkAlarmPending = false; return; }
+  const { error } = await settled(sb.from('walks').update({ status: 'alarm', updated_at: new Date().toISOString() })
     .eq('id', watchedWalk.id), 'raise the alarm');
-  setWalkStatus('Your watcher has been told you have stopped.');
-  buzz(800);
   // Deliberately no automatic call: the app cannot make one, so it must not claim to. The one thing
   // it can offer is the contact, one tap away, on a phone the walker is holding.
   const contact = contacts[0];
-  showToast(contact && contact.phone
-    ? `Your watcher has been told. Press SOS to call ${contact.name || contact.phone}.`
-    : 'Your watcher has been told you have stopped moving.', 8000);
+  const callHint = contact && contact.phone ? ` Press SOS to call ${contact.name || contact.phone}.` : '';
+  if (error) {
+    // This was the same silent-failure shape MAINTENANCE.md keeps naming, just in the one place it
+    // is worst: the write above used to be fire-and-forget, so a dropped connection right when the
+    // walker stopped moving still said "your watcher has been told" — a confident, false, all-clear
+    // at the exact moment that claim matters most. It now stays pending and keeps retrying instead
+    // of pretending it worked.
+    walkAlarmPending = true;
+    console.warn('SafeWalk: could not tell the watcher the walk stopped:', error.message);
+    setWalkStatus('Could not reach your watcher — no connection. Still trying.' + callHint);
+    if (!isRetry) {
+      buzz(400);
+      showToast('Could not tell your watcher you stopped moving. Will keep trying.' + callHint, 8000);
+    }
+    return;
+  }
+  const recovered = walkAlarmPending;   // this attempt followed at least one failed one
+  walkAlarmPending = false;
+  setWalkStatus('Your watcher has been told you have stopped.');
+  if (!isRetry || recovered) {
+    buzz(800);
+    showToast(`Your watcher has been told.${callHint}`, 8000);
+  }
 }
+
+// A failed alarm write must not just sit there until the next 30s tick. The moment the browser
+// itself notices a connection, retry right away.
+window.addEventListener('online', () => { if (walkAlarmPending) raiseWalkAlarm(true); });
 
 // ---------- Watcher's side ----------
 
