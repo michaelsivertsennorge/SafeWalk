@@ -68,6 +68,13 @@
        stretch they are on may be walking past the reason they are marking it, and a screen that
        lights up red announces what they just did. The confirmation is a haptic tick. -->
   <div class="walk-bar" id="walkBar" hidden>
+    <!-- Only shown on a watched walk. The two modes must be unmistakable: believing you are being
+         watched when you are not is worse than not offering the feature. -->
+    <div class="walk-watched" id="walkWatchedStrip" hidden>
+      <span class="walk-watched-dot" aria-hidden="true"></span>
+      <span id="walkWatchedText">Someone is watching this walk</span>
+      <button class="walk-watched-share" id="walkShareAgainBtn">Share link</button>
+    </div>
     <div class="walk-status" id="walkStatus" aria-live="polite">Walking — tap either button for the stretch you just passed</div>
     <div class="walk-actions">
       <button class="walk-btn walk-fine" id="walkFineBtn">Felt fine</button>
@@ -183,6 +190,7 @@
     <div id="routeStatus" class="route-status" aria-live="polite"></div>
     <div id="routeResults" class="route-results"></div>
     <button class="btn btn-primary btn-block" id="startWalkBtn" hidden>🚶 Start walking this route</button>
+    <button class="btn btn-secondary btn-block" id="startWatchedWalkBtn" hidden>👁 Walk with someone watching</button>
     <div class="route-feedback" id="routeFeedback" hidden>
       <p class="sheet-label">Actually walked or biked this route? Tell us how the selected one felt</p>
       <div class="rating-choice">
@@ -357,6 +365,43 @@
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-back>‹ My Page</button>
       <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+
+  <!-- Watcher view. Reached by opening a shared link, with no account and nothing installed —
+       the person you most want watching is a parent who will not sign up for anything. It replaces
+       the bottom bar entirely: a watcher is not here to rate streets. -->
+  <div class="watch-panel" id="watchPanel" hidden>
+    <div class="watch-head">
+      <span class="watch-dot" id="watchDot" aria-hidden="true"></span>
+      <strong id="watchHeadline">Following this walk</strong>
+    </div>
+    <p class="watch-detail" id="watchDetail" aria-live="polite">Looking for the walk…</p>
+    <p class="watch-age" id="watchAge"></p>
+    <div class="watch-actions">
+      <button class="btn btn-ghost" id="watchStopBtn">Stop following</button>
+    </div>
+    <p class="watch-fineprint">This page updates on its own while it stays open. Nothing you do here
+      is visible to them.</p>
+  </div>
+
+  <!-- Handing the link over. Kept as its own step rather than folded into "start walking", because
+       a watched walk nobody was actually sent the link for is the failure mode that matters. -->
+  <section class="sheet" id="walkShareSheet" role="dialog" aria-modal="true" aria-labelledby="walkShareTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="walkShareTitle">Send this to your watcher</h2>
+    <p class="sheet-sub">They can open it on any phone — no account, nothing to install. It shows
+      where you are and stops working twelve hours from now.</p>
+    <input id="walkShareLink" type="text" readonly aria-label="Link to share" />
+    <button class="btn btn-primary btn-block" id="walkShareBtn">Share link</button>
+    <p class="sheet-sub" id="walkShareStatus" aria-live="polite"></p>
+    <p class="sheet-sub sheet-fineprint">Anyone with this link can see your position until the walk
+      ends, so send it only to the person you mean. Your route is never stored — only where you are
+      right now, replaced each time it updates.</p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="walkShareCancelBtn">Cancel walk</button>
+      <button class="btn btn-primary" id="walkShareStartBtn">Start walking</button>
     </div>
   </section>
 

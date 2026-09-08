@@ -602,6 +602,49 @@ Any alarm needs a generous countdown, cancellable in one tap without unlocking a
 walker must have been told what the trigger is before they set out. An alarm system people learn to
 distrust is worse than none.
 
+**Built 2026-09-08.** Migration 018 and the client are live. What shipped:
+
+- **The walker** taps "👁 Walk with someone watching" on a route, gets a link, and sends it with the
+  phone's own share sheet. While walking, a strip above the walk buttons says so — the two modes are
+  unmistakable, because believing you are watched when you are not is worse than not offering it.
+- **The watcher** opens that link. No account, nothing installed, no bottom bar: the page shows a
+  status dot, where the walker is, and how old that is. It re-asks every ten seconds and holds a
+  wake lock, so a phone left face-up keeps updating.
+- **Wake lock is retaken on `visibilitychange`.** The browser drops it whenever a page is hidden, so
+  without that one glance at another app ends the walk silently.
+- **The alarm** fires after ten minutes without movement: a sixty-second countdown, cancellable with
+  one tap on the status line — the place the thumb already goes — and moving again cancels it by
+  itself. Nothing is sent until the countdown runs out.
+
+Privacy, decided in the schema rather than bolted on:
+- **Only the latest position is stored, overwritten.** No breadcrumb table, deliberately: a watcher
+  needs where you are, not where you have been. Same argument as 017, applied before the data
+  existed rather than after.
+- **The row expires after twelve hours and is purged hourly by cron.** Filtering an expired row out
+  of a query is not a retention policy; deleting it is.
+- **The watcher never touches the table.** anon and authenticated have no select on `walks` at all.
+  A watcher holds a token and calls one `security definer` function returning the walk's public
+  face — never `walker_id`, never another walk. Verified with the public key: every column of the
+  table is refused, an insert is refused, the purge function is refused, and a guessed token returns
+  an empty result indistinguishable from an expired one.
+- **The walker's phone number is never in the row**, which is why the watcher's page has no call
+  button. It tells them to call rather than pretending it can.
+
+Verified against the real database, not stubs: a genuine walk row was created, watched through the
+shared link, and driven through every status — walking (live dot, position on the map, "last seen 2
+minutes ago"), alarm ("They have stopped"), arrived ("They got there", polling stops) — plus an
+unknown token reading as "Nothing to follow". The walker side was driven through share, start, the
+alarm countdown, a one-tap cancel that sends nothing, and finish sending `arrived`.
+
+**Not verified: two phones, moving, at night.** Every position was set by hand, the wake lock has
+never been watched holding a real screen awake, and the ten-minute idle threshold is a guess that
+only a real walk will confirm or refute.
+
+Still open:
+- No push. A watcher whose phone is asleep learns nothing until they open the page — which is why
+  wait-mode reads current state rather than replaying events, but it is not a substitute.
+- No SMS, so nothing reaches anybody who is not looking at a screen. First premium feature.
+
 ### Proximity-gated voting — decided 2026-09-08: option 3
 The owner deferred the choice. Taking **option 3, weight rather than gate**, and the reason is
 sharper than "it leaks least".

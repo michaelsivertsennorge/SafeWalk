@@ -1806,6 +1806,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
   activeRouteCoords = null;
   routeFeedbackEl.hidden = true;
   document.getElementById("startWalkBtn").hidden = true;
+  document.getElementById("startWatchedWalkBtn").hidden = true;
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
@@ -1946,6 +1947,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       routeFeedbackEl.hidden = false;
       // Offered only once a route is on the map, because walk mode has nothing to follow without one.
       document.getElementById("startWalkBtn").hidden = false;
+      document.getElementById("startWatchedWalkBtn").hidden = false;
       if (fitView) {
         if (!keepSheetOpen) closeSheets();
         map.fitBounds(entries[rank].poly.getBounds(), { padding: [40, 40] });
@@ -3309,6 +3311,7 @@ function startWalk() {
   if (!requireAccount('to mark streets while you walk')) return;
 
   walkState = { coords: activeRouteCoords, index: 0, marked: 0, pending: null, timer: null, watchId: null };
+  if (watchedWalk) { watchedWalk.lastMovedAt = Date.now(); startWalkIdleWatch(); }
   closeSheets();
   walkBarEl().hidden = false;
   document.querySelector('.bottom-bar').hidden = true;
@@ -3324,6 +3327,15 @@ function startWalk() {
         // otherwise snap the return leg onto the outbound one and mark the wrong half.
         const p = routeProgress(walkState.coords, userLocation.lat, userLocation.lng, walkState.index);
         if (p) { walkState.index = p.index; walkState.offRouteM = p.offRouteM; walkState.hasFix = true; }
+        // A watched walk also tells the watcher where you are, and notices when you stop.
+        if (watchedWalk) {
+          if (!walkState.lastSeen || haversine(walkState.lastSeen.lat, walkState.lastSeen.lng, userLocation.lat, userLocation.lng) > WALK_MOVED_M) {
+            walkState.lastSeen = { ...userLocation };
+            noteWalkMovement();
+            cancelWalkAlarm(); // moving again is the clearest possible "I am fine"
+          }
+          pushWalkPosition();
+        }
       },
       () => {
         // Never over the undo line: that message is time-limited and is the only way back from a
@@ -3341,6 +3353,9 @@ function finishWalk({ silent = false } = {}) {
   if (walkState.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(walkState.watchId);
   const marked = walkState.marked;
   walkState = null;
+  // Finishing is the walker saying they arrived, which is the whole point of the watcher's page.
+  clearInterval(walkIdleTimer);
+  endWatchedWalk('arrived');
   walkBarEl().hidden = true;
   document.querySelector('.bottom-bar').hidden = false;
   if (silent) return;
@@ -3450,7 +3465,12 @@ document.getElementById('startWalkBtn').addEventListener('click', startWalk);
 document.getElementById('walkFineBtn').addEventListener('click', () => markWalk('safe'));
 document.getElementById('walkOffBtn').addEventListener('click', () => markWalk('danger'));
 document.getElementById('walkFinishBtn').addEventListener('click', () => finishWalk());
-document.getElementById('walkStatus').addEventListener('click', undoWalkMark);
+// The status line is the undo target for a mark, and while the alarm is counting down it is the
+// way out of that too — one tap, in the place the thumb already went, without unlocking anything.
+document.getElementById('walkStatus').addEventListener('click', () => {
+  if (alarmCountdown) { cancelWalkAlarm(); setWalkStatus('Alarm cancelled. Still walking.'); return; }
+  undoWalkMark();
+});
 
 // A locked screen or a switched app must commit what is pending, not drop it. pagehide is the one
 // that actually fires when a phone browser is backgrounded; visibilitychange covers the rest.
@@ -3603,6 +3623,297 @@ async function flushOutbox({ quiet = true } = {}) {
 // having to reopen anything.
 window.addEventListener('online', () => flushOutbox({ quiet: false }));
 
+
+// ---------- Watched walk ----------
+// Someone follows your walk while it happens, on a link they open without an account and without
+// installing anything — because the person you most want watching is a parent who will not do
+// either. The link is a capability: whoever holds it can watch, so it is a secret like a door key,
+// and it stops working after twelve hours.
+//
+// What is deliberately NOT built: nothing here calls anyone. A web page cannot dial — `tel:` needs a
+// finger on the screen — so the app must never imply an escalation it cannot perform. The alarm is
+// loud, on the walker's own phone, with the call one tap away. Reaching somebody who is not holding
+// their phone needs server-side SMS, which is not built yet and is not pretended to be.
+
+const WALK_PUSH_MS = 15000;       // how often the walker's position is sent while walking
+const WATCH_POLL_MS = 10000;      // how often the watcher's page re-asks
+const WALK_MOVED_M = 30;          // further than this counts as having moved
+const WALK_IDLE_MS = 10 * 60 * 1000;
+const WALK_ALARM_COUNTDOWN_MS = 60000;
+
+let watchedWalk = null;   // { id, token } while a watched walk is running
+let watchToken = null;    // set instead when this device is the WATCHER
+
+// The screen must stay awake, because geolocation stops with it and a watcher staring at a frozen
+// position learns nothing. The browser drops the lock whenever the page is hidden, so it is retaken
+// on the way back — without that, one glance at another app ends the walk silently.
+let wakeLock = null;
+let wantWakeLock = false;
+async function keepAwake(on) {
+  wantWakeLock = on;
+  try {
+    if (!on) {
+      if (wakeLock) { await wakeLock.release(); }
+      wakeLock = null;
+      return true;
+    }
+    if (!('wakeLock' in navigator)) return false;
+    wakeLock = await navigator.wakeLock.request('screen');
+    return true;
+  } catch {
+    wakeLock = null;
+    return false;
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && wantWakeLock && !wakeLock) keepAwake(true);
+});
+
+function walkShareUrl(token) {
+  return appRedirectUrl() + '?watch=' + token;
+}
+
+// ---------- Walker's side ----------
+
+document.getElementById('startWatchedWalkBtn').addEventListener('click', async () => {
+  if (!activeRouteCoords || activeRouteCoords.length < 2) { showToast('Pick a route first.'); return; }
+  if (!requireAccount('to let someone watch your walk')) return;
+  if (!sb) { showToast('You need a connection to start a watched walk.'); return; }
+
+  const { data, error } = await settled(
+    sb.from('walks').insert({ walker_id: currentUser.id }).select('id,share_token').single(),
+    'start a watched walk');
+  if (error) { showToast('Could not start a watched walk: ' + error.message); return; }
+
+  watchedWalk = { id: data.id, token: data.share_token };
+  document.getElementById('walkShareLink').value = walkShareUrl(data.share_token);
+  document.getElementById('walkShareStatus').textContent = '';
+  openSheet('walkShareSheet');
+});
+
+async function shareWalkLink() {
+  const url = walkShareUrl(watchedWalk && watchedWalk.token);
+  const statusEl = document.getElementById('walkShareStatus');
+  // navigator.share opens the phone's own sheet, which is how this actually gets sent — SMS,
+  // WhatsApp, whatever they already use with that person. Everything else is a fallback.
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Follow my walk home', text: 'Follow my walk home on SafeWalk:', url });
+      statusEl.textContent = 'Sent. Start walking when you are ready.';
+      return;
+    } catch {
+      // Cancelled, or refused by the browser. Fall through to copying.
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    statusEl.textContent = 'Link copied — paste it to your watcher.';
+  } catch {
+    const field = document.getElementById('walkShareLink');
+    field.focus();
+    field.select();
+    statusEl.textContent = 'Copy the link above and send it to your watcher.';
+  }
+}
+document.getElementById('walkShareBtn').addEventListener('click', shareWalkLink);
+document.getElementById('walkShareAgainBtn').addEventListener('click', shareWalkLink);
+
+document.getElementById('walkShareCancelBtn').addEventListener('click', async () => {
+  await endWatchedWalk('cancelled');
+  closeSheets();
+  showToast('Walk cancelled.');
+});
+
+document.getElementById('walkShareStartBtn').addEventListener('click', () => {
+  startWalk();  // the ordinary walk bar, plus the watched strip below
+  document.getElementById('walkWatchedStrip').hidden = false;
+  keepAwake(true);
+  pushWalkPosition(true);
+});
+
+// Only the latest position, replaced each time. There is no breadcrumb table on purpose: a watcher
+// needs where you are, not where you have been, and the difference is the whole privacy argument.
+let lastPushAt = 0;
+async function pushWalkPosition(force = false) {
+  if (!watchedWalk || !userLocation) return;
+  const now = Date.now();
+  if (!force && now - lastPushAt < WALK_PUSH_MS) return;
+  lastPushAt = now;
+  await settled(sb.from('walks').update({
+    last_lat: userLocation.lat,
+    last_lng: userLocation.lng,
+    last_position_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', watchedWalk.id), 'update your watcher');
+  // A failed push is not worth interrupting a walk for: the next one is fifteen seconds away, and
+  // the watcher's page shows how stale its information is, which is the honest signal here.
+}
+
+async function endWatchedWalk(status) {
+  if (!watchedWalk) return;
+  const id = watchedWalk.id;
+  watchedWalk = null;
+  cancelWalkAlarm();
+  keepAwake(false);
+  document.getElementById('walkWatchedStrip').hidden = true;
+  await settled(sb.from('walks').update({ status, updated_at: new Date().toISOString() }).eq('id', id), 'tell your watcher');
+}
+
+// ---------- The alarm ----------
+// Fires when the walker has not moved for a long time. The countdown is the important part: stopping
+// to talk to someone must not summon anybody, so there is always a way out, and it is one tap and
+// needs no unlocking.
+let walkIdleTimer = null;
+let alarmCountdown = null;
+
+function noteWalkMovement() {
+  if (!watchedWalk) return;
+  watchedWalk.lastMovedAt = Date.now();
+}
+
+function startWalkIdleWatch() {
+  clearInterval(walkIdleTimer);
+  walkIdleTimer = setInterval(() => {
+    if (!watchedWalk || alarmCountdown) return;
+    const since = Date.now() - (watchedWalk.lastMovedAt || Date.now());
+    if (since >= WALK_IDLE_MS) beginWalkAlarmCountdown();
+  }, 30000);
+}
+
+function beginWalkAlarmCountdown() {
+  if (alarmCountdown) return;
+  let left = Math.round(WALK_ALARM_COUNTDOWN_MS / 1000);
+  buzz(400);
+  const tick = () => {
+    if (!alarmCountdown) return;
+    setWalkStatus(`No movement for a while. Telling your watcher in ${left}s — tap here to cancel.`);
+    document.getElementById('walkStatus').classList.add('walk-undoable');
+    if (left <= 0) {
+      cancelWalkAlarm();
+      raiseWalkAlarm();
+      return;
+    }
+    left--;
+    buzz(60);
+  };
+  alarmCountdown = setInterval(tick, 1000);
+  tick();
+}
+
+function cancelWalkAlarm() {
+  if (!alarmCountdown) return;
+  clearInterval(alarmCountdown);
+  alarmCountdown = null;
+  document.getElementById('walkStatus').classList.remove('walk-undoable');
+  if (watchedWalk) watchedWalk.lastMovedAt = Date.now();
+}
+
+async function raiseWalkAlarm() {
+  if (!watchedWalk) return;
+  await settled(sb.from('walks').update({ status: 'alarm', updated_at: new Date().toISOString() })
+    .eq('id', watchedWalk.id), 'raise the alarm');
+  setWalkStatus('Your watcher has been told you have stopped.');
+  buzz(800);
+  // Deliberately no automatic call: the app cannot make one, so it must not claim to. The one thing
+  // it can offer is the contact, one tap away, on a phone the walker is holding.
+  const contact = contacts[0];
+  showToast(contact && contact.phone
+    ? `Your watcher has been told. Press SOS to call ${contact.name || contact.phone}.`
+    : 'Your watcher has been told you have stopped moving.', 8000);
+}
+
+// ---------- Watcher's side ----------
+
+let watchLayer = null;
+let watchPollTimer = null;
+
+function enterWatchMode(token) {
+  watchToken = token;
+  document.querySelector('.bottom-bar').hidden = true;
+  document.getElementById('mapHint').hidden = true;
+  document.getElementById('watchPanel').hidden = false;
+  watchLayer = L.layerGroup().addTo(map);
+  keepAwake(true);
+  pollWatchedWalk();
+  watchPollTimer = setInterval(pollWatchedWalk, WATCH_POLL_MS);
+}
+
+function leaveWatchMode() {
+  clearInterval(watchPollTimer);
+  watchPollTimer = null;
+  watchToken = null;
+  keepAwake(false);
+  document.getElementById('watchPanel').hidden = true;
+  document.querySelector('.bottom-bar').hidden = false;
+  if (watchLayer) watchLayer.clearLayers();
+  history.replaceState(null, '', location.pathname);
+}
+document.getElementById('watchStopBtn').addEventListener('click', leaveWatchMode);
+
+async function pollWatchedWalk() {
+  if (!watchToken || !sb) return;
+  const dot = document.getElementById('watchDot');
+  const headline = document.getElementById('watchHeadline');
+  const detail = document.getElementById('watchDetail');
+  const age = document.getElementById('watchAge');
+
+  const { data, error } = await settled(sb.rpc('walk_by_token', { p_token: watchToken }), 'check the walk');
+  if (error) {
+    // Do not overwrite what is already on screen with a connection problem — the last known
+    // position is still the most useful thing here, and its age is shown below it.
+    age.textContent = 'Cannot reach SafeWalk right now — still trying.';
+    return;
+  }
+
+  const walk = Array.isArray(data) ? data[0] : data;
+  if (!walk) {
+    dot.className = 'watch-dot watch-dot-ended';
+    headline.textContent = 'Nothing to follow';
+    detail.textContent = 'This link has expired, or the walk was never started. Ask them for a new one.';
+    age.textContent = '';
+    clearInterval(watchPollTimer);
+    return;
+  }
+
+  const state = {
+    walking:   { cls: 'watch-dot-live',  head: 'On their way',        text: 'They are walking. This updates on its own.' },
+    arrived:   { cls: 'watch-dot-done',  head: 'They got there',      text: 'They marked themselves home safely.' },
+    cancelled: { cls: 'watch-dot-ended', head: 'Walk ended',          text: 'They ended the walk.' },
+    alarm:     { cls: 'watch-dot-alarm', head: 'They have stopped',   text: 'No movement for a while and they did not cancel. Try calling them.' },
+  }[walk.status] || { cls: 'watch-dot-ended', head: 'Walk ended', text: '' };
+
+  dot.className = 'watch-dot ' + state.cls;
+  headline.textContent = state.head;
+  detail.textContent = walk.label ? `${state.text} (${walk.label})` : state.text;
+
+  if (walk.last_position_at) {
+    age.textContent = 'Last seen ' + describeAge(Date.now() - new Date(walk.last_position_at).getTime()) + '.';
+  } else {
+    age.textContent = 'No position yet.';
+  }
+
+  if (walk.last_lat != null && walk.last_lng != null) {
+    watchLayer.clearLayers();
+    L.circleMarker([walk.last_lat, walk.last_lng], {
+      radius: 9,
+      color: token('--you', '#4a9eff'),
+      fillColor: token('--you', '#4a9eff'),
+      fillOpacity: 0.85,
+      weight: 3,
+    }).addTo(watchLayer);
+    if (!watchLayer._centredOnce) {
+      map.setView([walk.last_lat, walk.last_lng], 16, { animate: false });
+      watchLayer._centredOnce = true;
+    }
+  }
+
+  if (walk.status !== 'walking' && walk.status !== 'alarm') {
+    clearInterval(watchPollTimer);
+    watchPollTimer = null;
+    keepAwake(false);
+  }
+}
+
 // ---------- Init ----------
 renderAccountState();
 // onAuthStateChange also fires on load and pulls the map in, but only once Supabase has finished
@@ -3618,6 +3929,16 @@ loadPoliceEvents();
 setInterval(loadPoliceEvents, POLICE_REFRESH_MS);
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
+
+// A shared link turns this same app into the watcher's page. Checked after the theme is applied,
+// because the walker's marker is drawn with resolved token colours.
+(function checkForWatchLink() {
+  const token = new URLSearchParams(location.search).get('watch');
+  // A malformed token would reach the database as a cast error rather than an empty result, so it
+  // is checked here — and an unknown but well-formed one is answered with "nothing to follow",
+  // exactly like an expired one.
+  if (token && /^[0-9a-f-]{36}$/i.test(token)) enterWatchMode(token);
+})();
 // Captured before the Supabase client was built; said out loud here, once the app is on screen.
 if (emailLinkError) {
   const expired = /expired|invalid|already/i.test(emailLinkError);
