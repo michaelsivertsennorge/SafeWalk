@@ -2804,7 +2804,35 @@ document.getElementById('accountActionBtn').addEventListener('click', async () =
     // Both paths land back on Profile, the sheet the button lives on — not the hub, which would
     // make cancelling a sign-out feel like something happened.
     if (!ok) { openProfile(); return; }
-    await sb.auth.signOut();
+
+    // signOut() defaults to revoking the session on the server, and that request can fail — an
+    // expired or already-revoked refresh token answers 403 — in which case supabase-js leaves the
+    // local session exactly where it was. The result was a button that ran, said "Signed out", and
+    // left you signed in: the error was never read.
+    //
+    // Signing out of THIS device never needs the server's permission. So when the round trip fails,
+    // fall back to a local sign-out, which just drops the stored session. Anyone who needs every
+    // device signed out can change their password, which revokes the rest.
+    let { error } = await sb.auth.signOut();
+    if (error) {
+      const local = await sb.auth.signOut({ scope: 'local' });
+      error = local.error;
+    }
+    if (error) {
+      // Not "clear my data on this device" — that button removes settings and the emergency
+      // contact, and deliberately leaves the session alone, so suggesting it here would send
+      // someone to wipe their contact for nothing.
+      showToast('Could not sign out — you are still signed in. Check your connection and try again.');
+      openProfile();
+      return;
+    }
+
+    // onAuthStateChange normally does this, but it is driven by the same library call that just
+    // struggled — so do not depend on it to have fired. Saying "Signed out" while still showing an
+    // email address is precisely the bug being fixed.
+    currentUser = null;
+    renderAccountState();
+    inPasswordRecovery = false;
     showToast('Signed out.');
     openProfile();
     return;
