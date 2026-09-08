@@ -89,6 +89,24 @@ Still open here:
     carries pure media notices about royal-visit road closures. `Brann` is mostly burnt cooking.
     `Trafikk` is car-on-car. `Savnet` should stay out: a missing person is not a hazard to a
     passer-by, and drawing a red zone around one would be wrong. Needs a decision from the owner.
+  - **The police layer could fail silently — now it says so.** `loadPoliceEvents` returned early
+    on any query error (network failure, a misconfigured policy, malformed rows) with no legend
+    entry, no log, nothing. The map key said "Police report (recent)" unconditionally, exactly like
+    the lit-streets legend before it was fixed on 2026-09-07 — a failed fetch and "nothing nearby
+    right now" were the same map. That silence also reached `checkPoliceProximity`, the "something
+    is happening near you" alert, which depends on `policeEvents` being populated: a failed load
+    meant the alert could never fire, with nothing on screen to say why. `legendPolice` in the map
+    key now reads "checking…", "— N here", "none active right now" or "data unavailable right now"
+    depending on what actually happened, mirroring `setLightingLegend`'s states, and a failure logs
+    once via `console.warn`. **Not verified: watched in a browser.** The four states were read
+    against the code path, not seen change on screen — someone should open the map key with a
+    working connection (expect "— N here" or "none active right now") and again with Supabase
+    blocked, e.g. via devtools request blocking on the `police_events` request (expect
+    "data unavailable right now"). Also still true and unchanged by this fix: `loadPoliceEvents`
+    only ever runs once, at page load — there is no retry on reconnect and no periodic refresh, so a
+    police report that appears after someone opens the app, or a load that failed because they
+    opened the app mid-dropout, will not be seen until the page is reloaded. Worth doing next: retry
+    on the `online` event, or a periodic refresh like `checkForUpdate`'s.
   - **Nominatim has real gaps in Norwegian coverage.** `Økern`, a well-known Oslo district, returns
     no result at all, so those incidents are skipped. Verified it is not rate-limiting — `Skullerud`
     succeeds in the same second.

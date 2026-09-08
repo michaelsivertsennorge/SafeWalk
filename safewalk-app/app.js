@@ -469,13 +469,39 @@ map.on('moveend', loadLighting);
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 
+// Same bug class the lit-streets legend was fixed for on 2026-09-07: the map key used to say
+// "Police report (recent)" unconditionally, whether the query had ever succeeded or not. A failed
+// fetch left policeEvents empty and drew nothing — indistinguishable on the map from "no incidents
+// nearby", which on a safety layer is the one thing it must never look like. This is a supplementary
+// layer like lighting, so a failure here explains itself and never blocks the rest of the map.
+let loggedPoliceFailure = false;
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Police reports — checking…',
+    ok: `Police report (recent)${count ? ` — ${count} here` : ''}`,
+    none: 'Police reports — none active right now',
+    failed: 'Police reports — data unavailable right now',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadPoliceEvents() {
   if (!sb) return;   // the pins path reports this; one banner is enough
+  setPoliceLegend('loading');
   const { data, error } = await sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) {
+    setPoliceLegend('failed');
+    if (!loggedPoliceFailure) {
+      loggedPoliceFailure = true;
+      console.warn('SafeWalk: could not load police events.', error);
+    }
+    return;
+  }
 
   policeEvents = data
     .map((r) => {
@@ -485,6 +511,7 @@ async function loadPoliceEvents() {
     .filter(Boolean);
   renderPoliceEvents();
   checkPoliceProximity();
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
 }
 
 
