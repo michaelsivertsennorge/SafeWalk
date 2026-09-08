@@ -19,6 +19,16 @@ let contacts = loadContacts();
 // Writing needs an account. "One vote per person" only means something if there's a person behind
 // it, and that's enforced by the votes table's (pin_id, user_id) primary key. A device id can't do
 // that job: clearing browser storage would hand you a fresh identity and an unlimited ballot.
+// Read before the client exists, because creating it starts the URL scan that consumes the
+// fragment. A dead or already-used email link comes back as #error=...&error_description=... and
+// nothing else: supabase-js finds no tokens, clears the hash, and the app opens looking perfectly
+// normal — the same screen as a link that worked. Whoever followed it is left guessing.
+const emailLinkError = (() => {
+  const hash = (location.hash || '').slice(1);
+  if (!hash.includes('error')) return '';
+  return new URLSearchParams(hash).get('error_description') || '';
+})();
+
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 let currentUser = null;
 const currentVoterId = () => (currentUser ? currentUser.id : null);
@@ -2639,11 +2649,18 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
 });
 
 // ---------- Forgot your password ----------
-// Where the reset link comes back to. Sending the current page rather than a hardcoded address
+// Where any emailed link comes back to. Sending the current page rather than a hardcoded address
 // means this works from a local build, from GitHub Pages, and from anywhere else the app is ever
 // hosted — but each of those origins has to be listed under Redirect URLs in the Supabase
-// dashboard, or Supabase silently sends people to the project's Site URL instead.
-function passwordResetRedirect() {
+// dashboard, or Supabase falls back to the project's Site URL instead.
+//
+// That fallback is why every email this app can send must pass this explicitly. The sign-up
+// confirmation did not, from the day accounts shipped until 2026-09-08, so Supabase used the Site
+// URL — still on its `http://localhost:3000` default — and every new user who tapped "confirm your
+// email" on their phone landed on a page that does not exist. Nothing in the app could see that:
+// from here a sign-up that is never confirmed and one that is confirmed onto a dead page look
+// exactly the same.
+function appRedirectUrl() {
   return location.origin + location.pathname.replace(/index\.html$/, '');
 }
 
@@ -2654,7 +2671,7 @@ document.getElementById('authForgotBtn').addEventListener('click', async () => {
   if (!email) { statusEl.textContent = 'Type your email address above first, then tap this again.'; return; }
 
   setLoadingStatus(statusEl, 'Sending your reset link…');
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: passwordResetRedirect() });
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appRedirectUrl() });
   // Deliberately the same message either way. Saying "no account with that email" would turn this
   // button into a way to test whether any given person uses SafeWalk — and on this app, that leaks
   // something about where they walk.
@@ -2782,7 +2799,8 @@ document.getElementById('authSubmitBtn').addEventListener('click', async () => {
   setLoadingStatus(statusEl, authMode === 'signin' ? 'Signing in…' : 'Creating your account…');
   const { data, error } = authMode === 'signin'
     ? await sb.auth.signInWithPassword({ email, password })
-    : await sb.auth.signUp({ email, password });
+    // emailRedirectTo, or the confirmation link goes to the project's Site URL — see appRedirectUrl().
+    : await sb.auth.signUp({ email, password, options: { emailRedirectTo: appRedirectUrl() } });
 
   if (error) { statusEl.textContent = error.message; return; }
 
@@ -3102,6 +3120,16 @@ loadLighting();
 loadPoliceEvents();
 // Theme first: ratingColor() reads tokens, so the very first renderPins() must already have them.
 applyTheme(currentTheme());
+// Captured before the Supabase client was built; said out loud here, once the app is on screen.
+if (emailLinkError) {
+  const expired = /expired|invalid|already/i.test(emailLinkError);
+  setTimeout(() => showToast(
+    expired
+      ? 'That email link has expired or was already used. Ask for a new one from the sign-in screen.'
+      : emailLinkError,
+    6000,
+  ), 900);
+}
 setTimeout(() => document.getElementById('mapHint').classList.add('hidden'), 6000);
 // Re-check at fire time, not just at schedule time — if the user already dismissed onboarding, or
 // is already mid-action (say, they tapped the map to rate a spot before this timer fired), don't
