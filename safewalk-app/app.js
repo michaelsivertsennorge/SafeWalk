@@ -2553,11 +2553,31 @@ function renderAccountState() {
   if (pw) pw.hidden = !currentUser;
 }
 
-// ---------- Changing your password ----------
-// Asking for the current password is not ceremony. Supabase will happily change a password from an
-// existing session alone, and this app is opened one-handed, on an unlocked phone, at night — the
-// case where someone else has your phone is exactly the case this has to survive. Verifying the old
-// password first means a stolen unlocked phone cannot lock you out of your own account.
+// ---------- Passwords ----------
+// Two ways in, one set of rules. Changing your password asks for the current one first: Supabase
+// will happily change it from an existing session alone, and this app is opened one-handed, on an
+// unlocked phone, at night — somebody else holding that phone is exactly the case this has to
+// survive, so a stolen unlocked phone must not be able to lock the owner out. Resetting by email
+// skips that check, because following the emailed link already proves you control the address.
+//
+// Set by the PASSWORD_RECOVERY event, cleared once a new password is saved or the session ends.
+// While it is true, Profile stops asking for the old password — otherwise someone who arrived by
+// reset link and dismissed the sheet would be signed in, unable to remember their password, and
+// facing a form that demands it: a dead end reachable in one tap.
+let inPasswordRecovery = false;
+
+// Returns a message to show, or '' when the pair is acceptable. Shared so the two forms can never
+// drift into disagreeing about what a valid password is.
+function newPasswordProblem(next, again, current) {
+  if (!next) return 'Choose a new password.';
+  // Supabase's own minimum. Checking here catches a typo before a round-trip, and names the rule
+  // instead of echoing a server error.
+  if (next.length < 6) return 'Your new password needs at least 6 characters.';
+  if (next !== again) return 'The two new passwords do not match.';
+  if (current && next === current) return 'That is already your password.';
+  return '';
+}
+
 function resetPasswordForm() {
   const form = document.getElementById('passwordForm');
   const showBtn = document.getElementById('showPasswordFormBtn');
@@ -2569,12 +2589,17 @@ function resetPasswordForm() {
     if (el) el.value = '';
   });
   document.getElementById('passwordStatus').textContent = '';
+  // After a reset link there is no old password to give, so the field is not merely optional —
+  // showing it would be asking for something the person came here precisely because they lack.
+  const currentField = document.getElementById('currentPassword');
+  currentField.hidden = inPasswordRecovery;
+  showBtn.textContent = inPasswordRecovery ? 'Set a new password' : 'Change my password';
 }
 
 document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
   document.getElementById('showPasswordFormBtn').hidden = true;
   document.getElementById('passwordForm').hidden = false;
-  document.getElementById('currentPassword').focus();
+  document.getElementById(inPasswordRecovery ? 'newPassword' : 'currentPassword').focus();
 });
 
 document.getElementById('cancelPasswordBtn').addEventListener('click', resetPasswordForm);
@@ -2588,31 +2613,90 @@ document.getElementById('savePasswordBtn').addEventListener('click', async () =>
   const next = document.getElementById('newPassword').value;
   const again = document.getElementById('confirmPassword').value;
 
-  if (!current || !next) { statusEl.textContent = 'Fill in your current and new password.'; return; }
-  // Supabase's own minimum. Checking it here means a typo is caught before a round-trip, and the
-  // message names the rule instead of echoing a server error.
-  if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
-  if (next !== again) { statusEl.textContent = 'The two new passwords do not match.'; return; }
-  if (next === current) { statusEl.textContent = 'That is already your password.'; return; }
+  if (!inPasswordRecovery && !current) { statusEl.textContent = 'Enter your current password.'; return; }
+  const problem = newPasswordProblem(next, again, inPasswordRecovery ? '' : current);
+  if (problem) { statusEl.textContent = problem; return; }
 
-  setLoadingStatus(statusEl, 'Checking your current password…');
-  // Re-signing in with the same account refreshes the session rather than replacing the user, so
-  // nothing on the map changes. A wrong password fails here and leaves the old one in place.
-  const { error: reauthError } = await sb.auth.signInWithPassword({
-    email: currentUser.email,
-    password: current,
-  });
-  if (reauthError) {
-    statusEl.textContent = 'That current password is not right.';
-    return;
+  if (!inPasswordRecovery) {
+    setLoadingStatus(statusEl, 'Checking your current password…');
+    // Re-signing in with the same account refreshes the session rather than replacing the user, so
+    // nothing on the map changes. A wrong password fails here and leaves the old one in place.
+    const { error: reauthError } = await sb.auth.signInWithPassword({
+      email: currentUser.email,
+      password: current,
+    });
+    if (reauthError) { statusEl.textContent = 'That current password is not right.'; return; }
   }
 
   setLoadingStatus(statusEl, 'Saving your new password…');
   const { error } = await sb.auth.updateUser({ password: next });
   if (error) { statusEl.textContent = error.message; return; }
 
+  inPasswordRecovery = false;
   resetPasswordForm();
   showToast('Password changed.');
+  buzz();
+});
+
+// ---------- Forgot your password ----------
+// Where the reset link comes back to. Sending the current page rather than a hardcoded address
+// means this works from a local build, from GitHub Pages, and from anywhere else the app is ever
+// hosted — but each of those origins has to be listed under Redirect URLs in the Supabase
+// dashboard, or Supabase silently sends people to the project's Site URL instead.
+function passwordResetRedirect() {
+  return location.origin + location.pathname.replace(/index\.html$/, '');
+}
+
+document.getElementById('authForgotBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('authStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to reset your password.'; return; }
+  const email = document.getElementById('authEmail').value.trim();
+  if (!email) { statusEl.textContent = 'Type your email address above first, then tap this again.'; return; }
+
+  setLoadingStatus(statusEl, 'Sending your reset link…');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: passwordResetRedirect() });
+  // Deliberately the same message either way. Saying "no account with that email" would turn this
+  // button into a way to test whether any given person uses SafeWalk — and on this app, that leaks
+  // something about where they walk.
+  if (error && !/rate|limit|too many/i.test(error.message)) {
+    statusEl.textContent = 'If there is an account for that address, a reset link is on its way. Check your spam folder too.';
+    return;
+  }
+  statusEl.textContent = error
+    ? 'Too many attempts just now. Wait a minute and try again.'
+    : 'If there is an account for that address, a reset link is on its way. Check your spam folder too. Open it on this device.';
+});
+
+function openNewPasswordSheet() {
+  ['resetPassword', 'resetPasswordAgain'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('resetStatus').textContent = '';
+  openSheet('newPasswordSheet');
+}
+
+document.getElementById('saveResetPasswordBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('resetStatus');
+  if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish this.'; return; }
+  const next = document.getElementById('resetPassword').value;
+  const again = document.getElementById('resetPasswordAgain').value;
+
+  const problem = newPasswordProblem(next, again, '');
+  if (problem) { statusEl.textContent = problem; return; }
+
+  setLoadingStatus(statusEl, 'Saving your new password…');
+  const { error } = await sb.auth.updateUser({ password: next });
+  // The commonest failure here is a link that has already expired or been used, and Supabase's own
+  // wording for it is opaque. Say what to do instead.
+  if (error) {
+    statusEl.textContent = /session|expired|invalid|jwt/i.test(error.message)
+      ? 'That reset link has expired. Ask for a new one from the sign-in screen.'
+      : error.message;
+    return;
+  }
+
+  inPasswordRecovery = false;
+  resetPasswordForm();
+  closeSheets();
+  showToast('Password changed. You are signed in.');
   buzz();
 });
 
@@ -2659,6 +2743,9 @@ function setAuthMode(mode) {
     ? 'New here? Create an account'
     : 'Already have an account? Sign in';
   document.getElementById('authPassword').autocomplete = signin ? 'current-password' : 'new-password';
+  // Nothing to recover on the way to a brand-new account, and offering it there invites people to
+  // ask for a reset link for an address that has never signed up.
+  document.getElementById('authForgotBtn').hidden = !signin;
   // When a write action sent us here, lead with what the sign-in is actually for.
   document.getElementById('authStatus').textContent = authReason ? `Sign in ${authReason}.` : '';
 }
@@ -2983,8 +3070,18 @@ async function persistVote(pinId, rating, note) {
 
 if (sb) {
   // Fires on load with the restored session too, so this is also how the map gets its first fill.
-  sb.auth.onAuthStateChange(async (_event, session) => {
+  sb.auth.onAuthStateChange(async (event, session) => {
     currentUser = session ? session.user : null;
+    // Arriving from a reset link. Supabase has already turned the token in the URL into a real
+    // session by this point, so without this the link would just sign someone in and leave them
+    // exactly where they started: unable to remember the password, with no way to set a new one.
+    if (event === 'PASSWORD_RECOVERY') {
+      inPasswordRecovery = true;
+      resetPasswordForm();
+      openNewPasswordSheet();
+    } else if (event === 'SIGNED_OUT') {
+      inPasswordRecovery = false;
+    }
     renderAccountState();
     // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
     // though the location has not moved.

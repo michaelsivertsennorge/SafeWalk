@@ -386,7 +386,25 @@
     <input id="authPassword" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password (min. 6 characters)" />
     <p class="sheet-sub" id="authStatus" aria-live="polite"></p>
     <button class="btn btn-primary btn-block" id="authSubmitBtn">Sign in</button>
+    <button class="btn btn-ghost btn-block" id="authForgotBtn">Forgot your password?</button>
     <button class="btn btn-ghost btn-block" id="authToggleModeBtn">New here? Create an account</button>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>Close</button>
+    </div>
+  </section>
+
+  <!-- Set a new password, reached from the emailed reset link. Opening that link signs you in
+       already, so this sheet does not ask for the old password: following the link is the proof
+       that you control the address, which is the whole point of a reset. -->
+  <section class="sheet" id="newPasswordSheet" role="dialog" aria-modal="true" aria-labelledby="newPasswordSheetTitle" tabindex="-1" hidden>
+    <div class="sheet-handle"></div>
+    <h2 id="newPasswordSheetTitle">Set a new password</h2>
+    <p class="sheet-sub" id="newPasswordIntro">You followed a reset link, so you are signed in. Choose a new password now.</p>
+    <input id="resetPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
+    <input id="resetPasswordAgain" type="password" autocomplete="new-password" aria-label="Repeat new password" placeholder="Repeat new password" />
+    <p class="sheet-sub" id="resetStatus" aria-live="polite"></p>
+    <button class="btn btn-primary btn-block" id="saveResetPasswordBtn">Save new password</button>
+    <p class="sheet-sub sheet-fineprint">If you close this without setting one, your old password still works — and Profile will offer this again while the link is still good.</p>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>Close</button>
     </div>

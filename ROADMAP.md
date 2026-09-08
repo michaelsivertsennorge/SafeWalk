@@ -57,10 +57,36 @@ an actual password change against Supabase** — that needs a real account and a
 password, so the two network calls (`signInWithPassword` to re-authenticate, then `updateUser`) have
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
+**Resetting a forgotten password** was added the same day, because the change form requiring the old
+password left anyone who had forgotten it with no way back into their account. "Forgot your
+password?" on the sign-in sheet sends a link via `resetPasswordForEmail`; following it fires
+`PASSWORD_RECOVERY`, which opens a sheet that asks only for the new password twice — the link itself
+is the proof of address, so there is nothing else to prove.
+
+Two details are not obvious and are easy to break:
+- The reply is identical whether or not the address has an account. Confirming an address would turn
+  the button into a way to test whether a given person uses SafeWalk, and on this app that leaks
+  something about where they walk.
+- Supabase turns the recovery token into a real session *before* the app sees it. Handling
+  `PASSWORD_RECOVERY` is therefore not optional: without it the link signs someone in and leaves
+  them exactly where they started — no memory of the password, and a form demanding it. Because that
+  sheet can be dismissed, `inPasswordRecovery` also reshapes the Profile form for the rest of the
+  session, so the same dead end cannot be reached the long way round.
+
+Verified in the browser: the forgot link appears on sign-in and disappears on create-account, an
+empty address is refused locally without sending anything, all three reset-form refusals fire, and
+recovery mode hides the current-password field and stops the save demanding it while normal mode
+still does. **Not verified: any of the actual email round-trip** — sending a real link needs a real
+inbox, and no reset email has been sent from this session. What has to be true for it to work at
+all, in the Supabase dashboard under Authentication → URL Configuration:
+- Redirect URLs must include `https://michaelsivertsennorge.github.io/SafeWalk/`
+- Site URL must be that too, not the `http://localhost:3000` a new project defaults to
+If either is wrong the email still arrives and the link still works — it just lands somewhere that
+is not SafeWalk, which looks like the reset silently failing.
+
 Still open here:
-- There is no "forgot password" flow. Someone who cannot remember their password has no way back
-  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
-  is the missing half.
+- No rate-limit feedback beyond a generic retry message, and Supabase's own limit on reset emails is
+  per-hour. Someone tapping twice will be told to wait a minute, which may understate it.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
 
