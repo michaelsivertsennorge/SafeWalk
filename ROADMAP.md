@@ -58,11 +58,29 @@ password, so the two network calls (`signInWithPassword` to re-authenticate, the
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
 Still open here:
-- There is no "forgot password" flow. Someone who cannot remember their password has no way back
-  into their account, and the change-password form deliberately requires the old one. `resetPasswordForEmail`
-  is the missing half.
 - Rating colours must keep their dash patterns (solid / dashed / dotted). That redundant encoding is
   what makes the map readable for colourblind users, and no palette change may drop it.
+
+### Forgot password — added 2026-09-08
+The sign-in screen had no way back in for someone who forgot their password, and the change-password
+form in Profile deliberately requires the old one — a stolen unlocked phone must not be able to lock
+the owner out, but that same rule left an honest owner with no recovery path at all.
+
+The auth sheet now has a third and fourth mode alongside sign-in/sign-up: "Forgot password?" sends
+`resetPasswordForEmail`, and when the emailed link is opened, Supabase fires a `PASSWORD_RECOVERY`
+auth event that the app now listens for — it opens the same sheet in a "choose a new password" mode
+and calls `updateUser`. Supabase deliberately answers the reset request the same way whether or not
+the address has an account, so the form can't be used to check who has signed up.
+
+**Not verified, and this is the important one: whether the emailed link actually redirects back into
+the app.** Supabase only redirects to URLs on that project's own allow-list, configured in the
+Supabase dashboard (Auth → URL Configuration → Redirect URLs) — something this environment has no
+credentials to read or change. `resetPasswordForEmail` itself will report success either way, so a
+missing entry fails silently from here: the email arrives, the link 400s or redirects nowhere, and
+nothing in this code would ever see that. Whoever has dashboard access needs to confirm
+`https://michaelsivertsennorge.github.io/SafeWalk/` is on that list before relying on this. The two
+network calls (`resetPasswordForEmail`, then `updateUser` after the redirect) have been read, not run
+end to end — that needs a real inbox and a real click.
 
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the

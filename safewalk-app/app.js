@@ -2653,15 +2653,43 @@ async function refreshStanding() {
 function setAuthMode(mode) {
   authMode = mode;
   const signin = mode === 'signin';
-  document.getElementById('authSheetTitle').textContent = signin ? 'Sign in' : 'Create account';
-  document.getElementById('authSubmitBtn').textContent = signin ? 'Sign in' : 'Create account';
+  const signup = mode === 'signup';
+  const reset = mode === 'reset';
+  const recovery = mode === 'recovery';
+
+  document.getElementById('authSheetTitle').textContent = recovery
+    ? 'Choose a new password'
+    : reset ? 'Reset your password' : signin ? 'Sign in' : 'Create account';
+  document.getElementById('authIntro').textContent = recovery
+    ? "You followed a password reset link. Set a new password below to finish."
+    : reset
+    ? "Enter your email and we'll send you a link to reset your password."
+    : 'Your ratings sync across your devices, and one account means one vote per place.';
+  document.getElementById('authSubmitBtn').textContent = recovery
+    ? 'Set new password'
+    : reset ? 'Send reset link' : signin ? 'Sign in' : 'Create account';
+
+  document.getElementById('authEmail').hidden = recovery;
+  document.getElementById('authPassword').hidden = reset;
+  document.getElementById('authPassword').placeholder = recovery
+    ? 'New password (min. 6 characters)'
+    : 'Password (min. 6 characters)';
+  document.getElementById('authPassword').autocomplete = recovery || signup ? 'new-password' : 'current-password';
+
+  document.getElementById('authForgotBtn').hidden = !signin;
+  document.getElementById('authToggleModeBtn').hidden = reset || recovery;
   document.getElementById('authToggleModeBtn').textContent = signin
     ? 'New here? Create an account'
     : 'Already have an account? Sign in';
-  document.getElementById('authPassword').autocomplete = signin ? 'current-password' : 'new-password';
-  // When a write action sent us here, lead with what the sign-in is actually for.
-  document.getElementById('authStatus').textContent = authReason ? `Sign in ${authReason}.` : '';
+  document.getElementById('authBackBtn').hidden = !reset;
+
+  // When a write action sent us here, lead with what the sign-in is actually for. Only meaningful
+  // for a plain sign-in — reset and recovery have their own explanation in authIntro above.
+  document.getElementById('authStatus').textContent = signin && authReason ? `Sign in ${authReason}.` : '';
 }
+
+document.getElementById('authForgotBtn').addEventListener('click', () => setAuthMode('reset'));
+document.getElementById('authBackBtn').addEventListener('click', () => setAuthMode('signin'));
 
 document.getElementById('accountActionBtn').addEventListener('click', async () => {
   if (!sb) return showToast('Cloud sync is unavailable — check your connection.');
@@ -2687,9 +2715,39 @@ document.getElementById('authToggleModeBtn').addEventListener('click', () => {
 });
 
 document.getElementById('authSubmitBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('authStatus');
+  if (!sb) return showToast('Cloud sync is unavailable — check your connection.');
+
+  if (authMode === 'reset') {
+    const email = document.getElementById('authEmail').value.trim();
+    if (!email) { statusEl.textContent = 'Enter your email.'; return; }
+    setLoadingStatus(statusEl, 'Sending reset link…');
+    // Supabase replies the same way whether or not the address has an account — it must, or this
+    // form would become a way to check who has signed up.
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split('#')[0].split('?')[0],
+    });
+    statusEl.textContent = error
+      ? error.message
+      : 'If that email has an account, a reset link is on its way. Open it on this device to set a new password.';
+    return;
+  }
+
+  if (authMode === 'recovery') {
+    const next = document.getElementById('authPassword').value;
+    if (!next) { statusEl.textContent = 'Enter a new password.'; return; }
+    if (next.length < 6) { statusEl.textContent = 'Your new password needs at least 6 characters.'; return; }
+    setLoadingStatus(statusEl, 'Saving your new password…');
+    const { error } = await sb.auth.updateUser({ password: next });
+    if (error) { statusEl.textContent = error.message; return; }
+    closeSheets();
+    showToast('Password changed — you are signed in.');
+    buzz();
+    return;
+  }
+
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
-  const statusEl = document.getElementById('authStatus');
   if (!email || !password) { statusEl.textContent = 'Enter your email and password.'; return; }
 
   setLoadingStatus(statusEl, authMode === 'signin' ? 'Signing in…' : 'Creating your account…');
@@ -2984,6 +3042,15 @@ async function persistVote(pinId, rating, note) {
 if (sb) {
   // Fires on load with the restored session too, so this is also how the map gets its first fill.
   sb.auth.onAuthStateChange(async (_event, session) => {
+    // Fires once, right after someone follows the emailed reset link — Supabase signs them into a
+    // recovery session so updateUser() can work, but they still need the form to actually set a new
+    // password. Without this, the app would just look like they signed in and the link would silently
+    // do nothing from their point of view.
+    if (_event === 'PASSWORD_RECOVERY') {
+      setAuthMode('recovery');
+      document.getElementById('authPassword').value = '';
+      openSheet('authSheet');
+    }
     currentUser = session ? session.user : null;
     renderAccountState();
     // Forced: signing in or out changes is_mine on every row, so the cached set is wrong even
