@@ -322,6 +322,22 @@ NOT remove it (below the floor); a third does; two people who were actually ther
 the public key and no account: the layer loads, the public shape carries no `user_id`, the time is
 hour-resolution, and the proximity hint flips correctly between near and far.
 
+**The incident layer could fail exactly like the police layer used to — fixed 2026-09-08.**
+`loadIncidents()` called `incidents_near` and, on a dropped connection or bad response, silently
+returned — no console line, no legend entry, nothing. The comment above it said "quiet on failure:
+the pins path already reports a lost connection", but the pins-path banner never mentions incidents,
+and unlike the police and lit-streets rows, the map key's incidents row was static text with no
+failure state to switch to. So a failed fetch, the proximity alert going quiet, and the route hazard
+list dropping incidents from its scoring all read as "nobody has reported anything nearby" — the
+same reassuring-wrong-answer bug MAINTENANCE.md names, one layer over from where it was already
+fixed twice. The map key now carries "Reported by users — checking… / — N here / — none nearby /
+— could not be loaded", driven by `setIncidentsLegend()`, the same pattern as `setPoliceLegend` and
+`setLightingLegend`. **Not verified: watched in a browser** — no browser in this environment, so
+this was checked by reading the existing legend pattern it copies and by re-running the test suite
+and parse check, not by watching the row change on a real dropped connection. Someone with a browser
+should block the `incidents_near` RPC (or go offline) and confirm the row reads "could not be
+loaded" rather than just going quiet, then restore the connection and confirm it recovers.
+
 Still open:
 - No moderation path beyond community disputes. A defamatory report can be voted down but not
   reported to anyone, and there is no appeal for a walker whose report is wrongly buried.

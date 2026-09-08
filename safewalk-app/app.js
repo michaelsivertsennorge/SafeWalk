@@ -4351,19 +4351,42 @@ let incidents = [];
 let pendingIncidentKind = null;
 let activeIncidentId = null;
 
+// The seventh instance of the same bug: this used to say "quiet on failure — the pins path already
+// reports a lost connection", but the pins path's banner never mentions incidents, and the map-key
+// row for this layer was static text with no failure state at all — unlike the police and lighting
+// rows a few hundred lines up, which exist precisely so a dropped request cannot read as "nothing
+// reported". A failed `incidents_near` call left the marker layer, the proximity alert
+// (checkIncidentProximity) and the route hazard list all silently empty or stale, which is the
+// reassuring wrong answer on a safety layer.
+function setIncidentsLegend(state, count) {
+  const el = document.getElementById('legendIncidents');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Reported by users — checking…',
+    ok: `Reported by users (last 7 days)${count ? ` — ${count} here` : ''}`,
+    none: 'Reported by users — none nearby',
+    failed: 'Reported by users — could not be loaded',
+  }[state] || 'Reported by users (last 7 days)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
+
 async function loadIncidents() {
-  if (!sb) return;
+  if (!sb) { setIncidentsLegend('failed'); return; }   // the pins path reports this; one banner is enough
   const c = typeof pinFetchCentre === 'function' ? pinFetchCentre() : userLocation;
-  if (!c) return;
+  if (!c) { setIncidentsLegend('loading'); return; }   // no fix yet — not a failure, just not ready
+  setIncidentsLegend('loading');
   const { data, error } = await settled(
     sb.rpc('incidents_near', { p_lat: c.lat, p_lng: c.lng, p_radius_m: INCIDENT_FETCH_RADIUS_M }),
     'load reported incidents');
-  // Quiet on failure: the pins path already reports a lost connection, and a second banner saying
-  // the same thing is noise. What must never happen is an empty layer reading as "nothing reported".
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) {
+    console.warn('SafeWalk: could not load reported incidents.');
+    setIncidentsLegend('failed');
+    return;
+  }
   incidents = data;
   renderIncidents();
   checkIncidentProximity();
+  setIncidentsLegend(incidents.length ? 'ok' : 'none', incidents.length);
 }
 
 // Walking towards one is the moment this data is worth anything. The police layer has warned people
