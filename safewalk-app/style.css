@@ -1231,3 +1231,6 @@ a:focus-visible {
 .watch-actions { display: flex; gap: 10px; }
 .watch-actions .btn { flex: 1; }
 .watch-fineprint { margin: 2px 0 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.4; }
+/* Sits directly under the watched-walk button, explaining the mechanism before it is tapped rather
+   than after — the owner's first question about this feature was who it connects to and how. */
+.route-watch-hint { margin: -4px 0 12px; font-size: 12px; line-height: 1.45; }

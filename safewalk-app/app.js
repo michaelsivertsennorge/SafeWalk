@@ -1807,6 +1807,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
   routeFeedbackEl.hidden = true;
   document.getElementById("startWalkBtn").hidden = true;
   document.getElementById("startWatchedWalkBtn").hidden = true;
+  document.getElementById("startWatchedHint").hidden = true;
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
@@ -1948,6 +1949,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       // Offered only once a route is on the map, because walk mode has nothing to follow without one.
       document.getElementById("startWalkBtn").hidden = false;
       document.getElementById("startWatchedWalkBtn").hidden = false;
+      document.getElementById("startWatchedHint").hidden = false;
       if (fitView) {
         if (!keepSheetOpen) closeSheets();
         map.fitBounds(entries[rank].poly.getBounds(), { padding: [40, 40] });
