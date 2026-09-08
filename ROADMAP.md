@@ -243,6 +243,32 @@ Still open here:
   each one lands. Capped at 200 and never sent anywhere except as the marks themselves, but it is a
   local trace, which is worth remembering if the device itself is the threat.
 
+### The map now says so when the CDN is blocked — fixed 2026-09-08
+The fourth recurring silent-failure bug class named in `MAINTENANCE.md` ("an empty map when the CDN
+is blocked") was still live. `app.js` opens with `let map = L.map('map', ...)` as a bare top-level
+statement — no guard. If unpkg.com is blocked (a network filter, an ad-blocker, a captive portal),
+`L` never arrives, that line throws a `ReferenceError`, and every line after it in `app.js` — every
+button, every sheet, all of walk mode — never runs. Nothing told the user why: they saw the static
+shell (header, hint text, an empty grey box where the map should be) with no error anywhere.
+
+Fixed with a gate in `index.html`, right where `app.js`'s `<script>` tag used to sit: if `typeof L
+=== 'undefined'` after the Leaflet `<script>` has had its chance to load, a full-screen message
+("SafeWalk couldn't load... a network filter or ad-blocker is blocking unpkg.com... reload") replaces
+the app instead of a silent blank page, and `app.js` is never loaded at all — so it never gets the
+chance to throw. When `L` did load, `app.js` is added via `document.write` in the exact position its
+static tag used to occupy, so the ordering and behaviour of a normal load are unchanged.
+
+`window.supabase` failing the same way (jsdelivr blocked) was already handled — `sb` is set to `null`
+behind a ternary rather than referenced bare, and around a dozen call sites already guard `if (!sb)`
+with a message. That path was not touched here; it was not the silent one.
+
+**Not verified: any of it in a browser.** This environment has no browser, so the failure was
+confirmed by reading — `L.map` is genuinely a bare top-level reference with nothing before it — and
+the fix was checked by parsing both files and re-running `tests/geo.test.js`, not by watching unpkg
+actually get blocked and the banner actually appear. Worth doing once with a browser extension that
+blocks `unpkg.com`, before trusting this the way the police-layer fix was trusted after five
+failed attempts.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is

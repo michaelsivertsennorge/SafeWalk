@@ -15,6 +15,15 @@
 
 <div id="app">
 
+  <div class="fatal-error" id="fatalError" role="alert" hidden>
+    <div class="fatal-error-box">
+      <span class="fatal-error-icon" aria-hidden="true">&#9888;</span>
+      <h2>SafeWalk couldn't load</h2>
+      <p id="fatalErrorMessage"></p>
+      <button class="btn btn-primary" id="fatalErrorReload">Reload</button>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand"><span class="brand-icon">🌙</span> SafeWalk</div>
     <button class="legend-toggle" id="nearMeBtn">Near me</button>
@@ -524,6 +533,24 @@
 <script src="config.js"></script>
 <!-- Pure maths, no DOM: loaded before app.js, and also runnable under Node by tests/geo.test.js -->
 <script src="geo.js"></script>
-<script src="app.js"></script>
+<script>
+  // app.js's very first act is `L.map(...)`. If unpkg was blocked — a network filter, an
+  // ad-blocker, a captive portal — L never arrives, that line throws, and everything after it in
+  // app.js (every button, every sheet) never runs. Before this check the result was a blank page
+  // with no error anywhere a user could see: the exact "empty map when the CDN is blocked" bug
+  // class this project keeps re-finding. document.write here is deliberate and safe — this script
+  // runs synchronously during the initial parse, in the same position app.js's own tag would have
+  // been, so writing that tag now has the same effect as it being there statically.
+  if (typeof L === 'undefined') {
+    document.getElementById('fatalErrorMessage').textContent =
+      "The map library didn't load, usually because a network filter or ad-blocker is blocking " +
+      'unpkg.com. Nothing below this message will work until it does. Try a different network, ' +
+      'allow unpkg.com, then reload.';
+    document.getElementById('fatalError').hidden = false;
+    document.getElementById('fatalErrorReload').addEventListener('click', () => location.reload());
+  } else {
+    document.write('<script src="app.js"><\/script>');
+  }
+</script>
 </body>
 </html>
