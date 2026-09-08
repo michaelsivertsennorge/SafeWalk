@@ -468,14 +468,41 @@ map.on('moveend', loadLighting);
 // weigh themselves, and quietly moving a route because of one would hide the reason.
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
+let loggedPoliceFailure = false;
+
+// Same trap the lit-streets legend already fell into: this layer is empty almost all the time even
+// when it is working (see ROADMAP.md), so "no incidents right now" and "we could not check" render
+// as the exact same blank map. That distinction matters more here than anywhere else in the app —
+// this is the layer for "something is happening near you right now" — so the map key says which one
+// it actually is, instead of a static label that means "trust me" either way.
+function setPoliceLegend(state, count) {
+  const el = document.getElementById('legendPolice');
+  if (!el) return;
+  el.textContent = {
+    loading: 'Police reports — checking…',
+    ok: `Police report (recent)${count ? ` — ${count} here` : ''}`,
+    none: 'Police reports — none recent',
+    failed: 'Police reports — data unavailable right now',
+  }[state] || 'Police report (recent)';
+  el.classList.toggle('legend-muted', state !== 'ok');
+}
 
 async function loadPoliceEvents() {
-  if (!sb) return;   // the pins path reports this; one banner is enough
+  // reportNoBackend() already puts up the "could not reach the safety data" banner for this case;
+  // this just keeps the map key from claiming forever that it is still checking.
+  if (!sb) { setPoliceLegend('failed'); return; }
   const { data, error } = await sb
     .from('police_events')
     .select('id,category,area,municipality,text_body,radius_m,precision_label,is_active,occurred_at,expires_at,geom')
     .gt('expires_at', new Date().toISOString());
-  if (error || !Array.isArray(data)) return;
+  if (error || !Array.isArray(data)) {
+    setPoliceLegend('failed');
+    if (!loggedPoliceFailure) {
+      loggedPoliceFailure = true;
+      console.warn('SafeWalk: could not load police events.', error);
+    }
+    return;
+  }
 
   policeEvents = data
     .map((r) => {
@@ -485,6 +512,7 @@ async function loadPoliceEvents() {
     .filter(Boolean);
   renderPoliceEvents();
   checkPoliceProximity();
+  setPoliceLegend(policeEvents.length ? 'ok' : 'none', policeEvents.length);
 }
 
 

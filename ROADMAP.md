@@ -89,6 +89,18 @@ Still open here:
     carries pure media notices about royal-visit road closures. `Brann` is mostly burnt cooking.
     `Trafikk` is car-on-car. `Savnet` should stay out: a missing person is not a hazard to a
     passer-by, and drawing a red zone around one would be wrong. Needs a decision from the owner.
+  - **A failed fetch and "no incidents" used to look identical — fixed 2026-09-08.** `loadPoliceEvents`
+    read `if (error || !Array.isArray(data)) return;` and left the map exactly as it was: no legend,
+    no console line reachable outside devtools, nothing. On a layer the line above already says is
+    empty almost all the time *when working*, a broken query (RLS change, dropped column, network
+    drop mid-session) was indistinguishable from a quiet night — this project's recurring silent-failure
+    bug class, on the one layer whose whole job is "something is happening near you right now". Fixed
+    the same way the lit-streets legend was: the map key now reads "Police reports — checking…" →
+    "Police report (recent) — N here" / "none recent" / "data unavailable right now", and a genuine
+    error is logged to the console once. **Not verified: never watched failing.** No Supabase access
+    from here to break the query and confirm the legend actually flips to "data unavailable" — that
+    needs someone with database access to point `police_events` at a bad column or table name for a
+    moment and watch the map key, then undo it.
   - **Nominatim has real gaps in Norwegian coverage.** `Økern`, a well-known Oslo district, returns
     no result at all, so those incidents are skipped. Verified it is not rate-limiting — `Skullerud`
     succeeds in the same second.
