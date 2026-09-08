@@ -3597,6 +3597,9 @@ function finishWalk({ silent = false } = {}) {
   endWatchedWalk('arrived');
   walkBarEl().hidden = true;
   document.querySelector('.bottom-bar').hidden = false;
+  // An update held back for the whole walk (see applyUpdateIfIdle) applies now rather than waiting
+  // for the next periodic check, which could be up to 30 minutes away.
+  if (typeof applyUpdateIfIdle === 'function') setTimeout(applyUpdateIfIdle, 350);
   if (silent) return;
   // The one question worth asking, asked at the only moment it can be answered honestly: after the
   // walk. Most people will not have touched the phone on the way, so this is what catches them —
@@ -4735,6 +4738,11 @@ function applyUpdateIfIdle() {
   // Never yank the page out from under someone mid-report — a half-typed note about a street that
   // frightened them is not something to discard for a version bump. Wait until the sheet is closed.
   if (document.querySelector('.sheet.open')) return;
+  // Never yank it out from under an active walk either. walkState lives only in this tab's memory —
+  // a reload silently drops the route, the GPS watch and, for a watched walk, the position pushes
+  // that keep the watcher's page current, with nothing but an easy-to-miss toast to explain why.
+  // finishWalk() re-triggers this check once the walk safely ends.
+  if (walkState) return;
   updatePending = false;
   showToast('Updating to the latest version…');
   setTimeout(() => location.reload(), 900);

@@ -407,6 +407,28 @@ a control, and enlarging it would put a tap target over the map.
 
   Still worth doing: the Valhalla message says "taking too long" even when the connection failed
   instantly. The advice it gives is right either way, so this is cosmetic.
+- **The auto-update reload could silently end an active walk — fixed 2026-09-08.** `applyUpdateIfIdle()`
+  exists specifically to not "yank the page out from under someone" — but it only checked for an open
+  sheet, not for `walkState`. Walk mode replaces the bottom bar with its own bar rather than opening a
+  sheet, so it was invisible to that guard entirely. The practical failure: `checkForUpdate()` runs
+  every 30 minutes and on every `visibilitychange` — which on a phone means every screen lock and
+  unlock, i.e. constantly, during exactly the activity this feature is for — and `closeSheets()`
+  re-triggers the check 350ms after *any* sheet closes. So opening and closing any sheet mid-walk
+  (checking the map key, reporting a mid-walk incident, glancing at My Page) while an update happened
+  to be pending would reload the page: the route, the GPS watch and `walkState` all live only in that
+  tab's memory and none of it survives a reload, and for a watched walk it silently stops the position
+  pushes the watcher's page depends on — which could read as the walker having stopped, exactly the
+  condition the alarm exists to catch, without either side being told why. A queued mark inside its
+  4-second undo window is still safe (flushed on `pagehide`, unrelated to this bug), but the walk
+  itself just ends, with only an easy-to-miss "Updating to the latest version…" toast as explanation.
+  `applyUpdateIfIdle()` now also defers while `walkState` is set, and `finishWalk()` re-triggers the
+  check once the walk safely ends, so a held-back update applies promptly afterwards rather than
+  waiting for the next periodic check. **Not verified: watched running.** No browser in this
+  environment — read the code path (the 30-minute interval, the `visibilitychange` listener, and
+  `closeSheets`'s 350ms retry) rather than watched a reload actually fire mid-walk. Someone with a
+  phone should: start a walk, force `updatePending` (e.g. via devtools by editing `version.json` on a
+  second tab, or waiting for a real deploy), open and close any sheet, and confirm the app does NOT
+  reload until "Finish walk" is pressed.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
