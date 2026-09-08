@@ -2793,12 +2793,25 @@ async function refreshStanding() {
   if (!row) return;
   if (!currentUser) { row.hidden = true; return; }
   const { data, error } = await settled(sb.rpc('my_standing'), 'load your standing');
-  if (error || !data || !data.length) { row.hidden = true; return; }
+  const headline = document.getElementById('standingHeadline');
+  const detail = document.getElementById('standingDetail');
+  // Hiding the whole row on a failed fetch reads exactly like "you have no standing" — this app's
+  // most-repeated bug, just in a new place. A cooldown is the one state someone most needs to see
+  // (it says why new marks stopped saving), so going quiet here is the worst spot for it to recur.
+  if (error) {
+    console.warn('SafeWalk: could not load standing:', error.message);
+    row.hidden = false;
+    row.classList.remove('standing-warn');
+    headline.textContent = "Couldn't check your standing";
+    detail.textContent = error.threw
+      ? 'No connection right now. Reopen this page once you have one.'
+      : 'Something went wrong loading it. Try again in a moment.';
+    return;
+  }
+  if (!data || !data.length) { row.hidden = true; return; }
   const s = data[0];
   const total = Number(s.confirmations) + Number(s.contradictions);
   row.hidden = false;
-  const headline = document.getElementById('standingHeadline');
-  const detail = document.getElementById('standingDetail');
 
   if (!total) {
     headline.textContent = 'No feedback on your marks yet';

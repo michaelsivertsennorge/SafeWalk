@@ -208,6 +208,17 @@ Still open here:
   window (`backend/005`). Those need real traffic. Wrongly silencing an honest reporter is much
   worse than letting a careless one continue, so err toward leniency when tuning.
 
+  **The standing display itself had the project's most-repeated bug — fixed 2026-09-08.**
+  `refreshStanding()` hid the entire "Reporter standing" row on any failed fetch of `my_standing`,
+  which looks identical to "you have no feedback yet." That is the worst place for this failure to
+  recur: the one thing the row exists to show during a cooldown is *why new marks stopped saving*,
+  and a network hiccup made that explanation vanish instead of the marks. It now shows "Couldn't
+  check your standing" and says whether that was a connection problem or something else, instead of
+  going quiet. Not verified in a browser — no browser in this environment — only read against the
+  same pattern already shipped and verified for "My reports" (`myHistoryIncomplete`, 2026-09-08
+  morning). Someone with a browser should force `my_standing` to fail (block the request, or sign in
+  offline) and confirm the row shows the new message rather than disappearing.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is
