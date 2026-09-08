@@ -564,6 +564,77 @@ more carefully than average, and an app that tells people where is safe invites 
 accuracy and liability. And once there is a store listing, the privacy policy and data-protection
 work stops being optional — Apple and Google both require a privacy label before the first release.
 
+### Watched walk — designed 2026-09-08, not yet built
+The owner's design, with the constraints that actually bind.
+
+**Settled and buildable as a web app:**
+- The watcher's phone sleeping is a normal state, not a failure. The walk's current state lives in
+  the database, not only in realtime events, so opening the app at any point shows where the walker
+  is now rather than replaying what was missed. Realtime is the fast path; the row is the truth.
+- Both phones hold a Screen Wake Lock for the duration, re-acquired on `visibilitychange` because
+  the browser releases it whenever the page is hidden. Neither side sleeps until the walk is ended
+  deliberately.
+- The walk ends one of three ways: the walker arrives, the walker cancels, or the alarm fires.
+
+**The constraint that decides the escalation design: a web page cannot place a phone call.**
+`tel:` requires a user gesture — a page cannot dial on its own on iOS or Android, and even a native
+app cannot place a call silently. So "if the push doesn't reach the watcher, call the emergency
+contact" cannot happen automatically in what SafeWalk is today. Something has to be able to act
+while nobody is looking at a screen, and only a server can do that.
+
+Three honest options:
+1. **Server-side SMS** (Twilio or similar). The only one that genuinely reaches a person who is
+   not holding their phone: "Michael started a walk home at 23:10 and hasn't arrived. Last seen
+   Storgata." Works whether or not the watcher has the app, which is the same reason the emergency
+   contact stays a phone number. Costs real money per message — and it is precisely the kind of
+   thing the premium plan exists to fund.
+2. **Alarm on the walker's phone**, full screen, loud, with a one-tap "Call <name>" button. Free and
+   immediate, but it only helps if the walker can still reach their phone — which is exactly the
+   case the alarm exists for.
+3. **Both**, with (2) firing first and (1) after a further delay.
+
+Recommended: build (2) now because it costs nothing and is honest, and treat (1) as the first
+premium feature with a real marginal cost behind it. Until (1) exists, the app must not imply
+anybody will be called automatically.
+
+**False alarms are the whole design problem.** Stopping to talk to someone must not summon anyone.
+Any alarm needs a generous countdown, cancellable in one tap without unlocking anything, and the
+walker must have been told what the trigger is before they set out. An alarm system people learn to
+distrust is worse than none.
+
+### Proximity-gated voting — decided 2026-09-08: option 3
+The owner deferred the choice. Taking **option 3, weight rather than gate**, and the reason is
+sharper than "it leaks least".
+
+A vote already carries a location: `pin_id` *is* a place. Attaching "I was near this when I voted"
+therefore adds no new fact about where somebody was — it says something about a place they had
+already told us they were interacting with. Option 2 is different in kind: a presence record exists
+whether or not the person ever votes, which is a trail of where they walked, and that is precisely
+what migration 017 was written to destroy. Rebuilding it with a retention promise as the only
+protection would undo today's work for a benefit that cannot be enforced anyway.
+
+Because the client can lie about proximity either way, a gate is security theatre — it stops nobody
+determined and blocks honest people with bad GPS. A weight degrades gracefully: a false claim buys a
+little influence rather than the right to erase a warning, and the reputation system already in
+place is what actually handles bad actors.
+
+### Premium — agreed 2026-09-08
+Nothing that warns anybody is ever behind it. Agreed list:
+- **Offline city packs** — the whole of a city's tiles and street network, downloaded for a trip.
+  A genuine storage and bandwidth cost, so charging for it is defensible rather than artificial.
+- **More than one emergency contact**, and watched walks with more than one watcher.
+- **Your own history and statistics.**
+- **Custom themes and icon packs** — the one category where paying changes nothing for anyone else.
+- **Server-side SMS alerts** (see above), once they exist.
+Organisation accounts remain the larger opportunity: campuses and councils paying for a private
+channel while citizens use it free.
+
+### Naming — still open
+None of Lykta, Følge, Nattevakt, Trygg vei or Hjemveien landed. Deferred. The constraints stand: the
+current name is close to generic and already in use by university escort services, a trademark
+search belongs before any logo work, and the token system must stay strict so a rebrand costs an
+afternoon.
+
 ## Rules that must not be broken
 
 1. **Never publish authorship.** `pins_with_scores` exposes `is_mine`, never `user_id`; `votes` and
