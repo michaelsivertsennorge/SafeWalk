@@ -79,13 +79,24 @@ function findNearbyPin(lat, lng, radius = 40) {
 // so and point at what does still work.
 const isOffline = () => navigator.onLine === false;
 
+// Why the last call failed: 'timeout' | 'network' | 'http'. All three used to come back as a bare
+// null, so callers could only guess, and the routing error said "taking too long to respond" even
+// when the connection had failed instantly — telling someone to wait when the answer is to check
+// their signal.
+//
+// Only meaningful immediately after a single awaited call. The hedged Overpass mirrors race several
+// of these at once and will overwrite each other, which is why they do not read it.
+let lastFetchFailure = null;
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  lastFetchFailure = null;
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
-    return res.ok ? res : null;
-  } catch {
+    if (!res.ok) { lastFetchFailure = 'http'; return null; }
+    return res;
+  } catch (err) {
+    lastFetchFailure = err && err.name === 'AbortError' ? 'timeout' : 'network';
     return null;
   } finally {
     clearTimeout(timeout);
@@ -1853,9 +1864,14 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res) throw new Error(isOffline()
-      ? "You are offline, so a route cannot be worked out — that needs a connection. The map and your saved marks still work."
-      : "The routing service is taking too long to respond. Try again in a moment.");
+    if (!res) throw new Error(
+      isOffline()
+        ? "You are offline, so a route cannot be worked out — that needs a connection. The map and your saved marks still work."
+      : lastFetchFailure === 'timeout'
+        ? "The routing service is taking too long to respond. Try again in a moment."
+      : lastFetchFailure === 'http'
+        ? "The routing service is having trouble right now. Try again in a moment."
+        : "Couldn't reach the routing service. Check your connection and try again.");
     const data = await res.json();
     if (!data.trip) throw new Error(`No ${modeLabel} route found between those points.`);
 
@@ -3690,8 +3706,42 @@ document.getElementById('startWatchedWalkBtn').addEventListener('click', async (
   watchedWalk = { id: data.id, token: data.share_token };
   document.getElementById('walkShareLink').value = walkShareUrl(data.share_token);
   document.getElementById('walkShareStatus').textContent = '';
+  offerSmsToContact(data.share_token);
   openSheet('walkShareSheet');
 });
+
+// The two message-app URL shapes are not interchangeable: RFC 5724 specifies `sms:number?body=`,
+// which Android follows, while iOS has always wanted `sms:number&body=` and drops the text with the
+// other one. Getting it wrong does not fail loudly — the messaging app opens with an empty message
+// and the link silently missing, which is the worst kind of wrong for a share button.
+function smsHref(number, body) {
+  const apple = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+  return 'sms:' + number + (apple ? '&' : '?') + 'body=' + encodeURIComponent(body);
+}
+
+// The emergency contact is the person most likely to be watching, and their number is already on
+// this device — kept there, never uploaded. This only builds a link; the walker still presses send.
+function offerSmsToContact(shareToken) {
+  const btn = document.getElementById('walkShareSmsBtn');
+  const none = document.getElementById('walkShareNoContact');
+  const c = contacts[0];
+  if (!c || !c.phone) {
+    btn.hidden = true;
+    none.hidden = false;
+    return;
+  }
+  none.hidden = true;
+  btn.hidden = false;
+  btn.textContent = `Text the link to ${c.name || c.phone}`;
+  btn.onclick = () => {
+    const url = walkShareUrl(shareToken);
+    window.location.href = smsHref(normalisePhone(c.phone),
+      `I'm walking home. Follow me here and you'll see when I arrive: ${url}`);
+    document.getElementById('walkShareStatus').textContent =
+      'Your messages app should open with it ready — you still have to press send.';
+  };
+}
 
 async function shareWalkLink() {
   const url = walkShareUrl(watchedWalk && watchedWalk.token);

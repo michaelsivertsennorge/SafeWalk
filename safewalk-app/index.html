@@ -404,7 +404,13 @@
     <p class="sheet-sub">They can open it on any phone — no account, nothing to install. It shows
       where you are and stops working twelve hours from now.</p>
     <input id="walkShareLink" type="text" readonly aria-label="Link to share" />
-    <button class="btn btn-primary btn-block" id="walkShareBtn">Share link</button>
+    <!-- Straight to the person most likely to be watching, in the phone's own messaging app with
+         the number and text already filled in. Nothing is sent until they press send — SafeWalk
+         cannot send a message, and their number never leaves the phone. -->
+    <button class="btn btn-primary btn-block" id="walkShareSmsBtn" hidden></button>
+    <button class="btn btn-secondary btn-block" id="walkShareBtn">Share another way</button>
+    <p class="sheet-sub" id="walkShareNoContact" hidden>Add an emergency contact in My Page and this
+      screen will offer to text them the link directly.</p>
     <p class="sheet-sub" id="walkShareStatus" aria-live="polite"></p>
     <p class="sheet-sub sheet-fineprint">Anyone with this link can see your position until the walk
       ends, so send it only to the person you mean. Your route is never stored — only where you are
