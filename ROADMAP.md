@@ -191,9 +191,26 @@ Still open here:
     succeeds in the same second.
   - Only `Voldshendelse` and `Ro og orden` are mirrored. Revisit whether `Andre hendelser` is worth
     including once there is a feel for what it contains.
-  - Police events are shown but deliberately NOT folded into the route score. An official report is
-    evidence a person should weigh themselves, and silently moving a route because of one would hide
-    the reason. Worth revisiting with real usage.
+  - **Police events are now folded into the route score — fixed 2026-09-08 (commit 3fa27d9), and this
+    entry had never been updated to say so.** It kept claiming the opposite — "deliberately NOT
+    folded into the route score" — which was true right up until that commit and false on every main
+    since, with nothing here to tell the next run. "Find the safest route" had been ignoring both the
+    police layer and every user incident report, the two freshest and most serious things the app
+    knows, so a route through a live cordon ranked identically to one avoiding it.
+    Both are now weighed in `geo.js` as EVENTS rather than folded in as opinions, because they answer
+    a different question than a rating does — not how a street feels, but whether something happened
+    and how recently: `hazardWeight()` halves every 36 hours (floored, so a week-old report still
+    counts), and, per the original worry above, a police report is not second-guessed by
+    confirmations/disputes the way a user incident is — the ranker weighs it as fact, not opinion.
+    The one thing that must never happen is the ranker calling a route "safest" while a hazard still
+    sits on it, so `routeRankingClaim()` cannot return that verdict in that case (see
+    `hazardOnRoute`/`avoidsHazard` below); the UI sentence names what was reported and whether it was
+    avoidable, worded so a stranger's report (`hazardSentence`) never reads like a police one.
+    Checked in the code and by running `node tests/geo.test.js` (105 assertions, all passing) rather
+    than assumed: `hazardWeight`, `routeHazards`, `routeSafetyScore` and `routeRankingClaim` all live
+    in `geo.js`, and `routeHazardList()` in `app.js` feeds them the live `policeEvents` and
+    `incidents` arrays. Not re-verified in a browser here — this is a documentation catch-up, not a
+    new change, so nothing about the feature itself was touched or newly tested this run.
 - **Google sign-in** alongside email/password. Needs Google Cloud console setup.
 - **Reputation: the mechanism is verified, the numbers are still a guess.** `backend/tests/reputation.sql`
   was run against the live database on 2026-09-07 and all ten checks passed, including the ones no
@@ -803,3 +820,10 @@ afternoon.
 4. **Migrations are append-only.** Never edit an applied file in `backend/`; add the next number.
 5. **Only the anon key belongs in the repo.** Never the `service_role` key or the database password.
 6. **Walking and biking only.** Never car routing — the app is for people on foot.
+7. **Any click handler that `await`s before writing must go through `onceAtATime()`** (`app.js`).
+   A synchronous handler can't run twice over itself — the event loop finishes it before the next tap
+   is dispatched — but an `await` opens a gap between the tap and the write that a second tap lands
+   in cleanly. Found the hard way (commit 3fa27d9, then audited everywhere in 93bc6c2): one unguarded
+   incident-report button turned twelve rapid presses into twelve public accusations at a real
+   address, live in the database, before anyone noticed. Every existing awaiting handler is wrapped
+   now; a new one that isn't is this bug waiting to recur.
