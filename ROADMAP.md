@@ -257,6 +257,21 @@ reverted later because nothing was changed yet. The three buttons that call `del
 that call `persistUpdate` directly now go through `onceAtATime`, per the rule this file already
 wrote down for any handler that awaits before writing.
 
+**Awaiting the write was not enough on its own — `persistDelete`'s own error toast could still lie.**
+It checked only whether Postgres *threw*, and a delete blocked by row-level security (or aimed at a
+pin already gone) throws nothing: it matches zero rows and reports success. That is precisely the
+blind spot `writeExpectingRows` exists to close for `persistUpdate`'s vote write, but `persistDelete`
+never went through it — so even with the awaiting fixed above, a blocked delete would still say
+"Report deleted." while the pin stayed on the map for everyone else. `writeExpectingRows` now takes
+the id column to select back (`pin_id` by default for the vote-table callers, `id` for `pins` and
+`incidents`), and `persistDelete` goes through it. The community-incident delete button
+(`#incidentDeleteBtn`) had the identical gap — already correctly awaited, but checking only for a
+thrown error — and gets the same fix here, since it is the same bug in the sibling feature.
+**Not verified against a live database**: no RLS-blocked delete was actually triggered from this
+environment, so the new toast ("Could not delete — the change may not have saved") has been read
+but not watched firing for either table. `tests/geo.test.js` (105 assertions) and a parse check of
+all four client files still pass.
+
 **Deliberately still not queued.** These stay a "needs a connection" case rather than joining the
 outbox: unlike a new mark or a vote, there is no local placeholder that can honestly stand in for
 "street re-traced" or "rating changed" while offline, and retrying a delete against a pin that has

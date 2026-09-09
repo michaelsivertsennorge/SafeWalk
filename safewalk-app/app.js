@@ -3401,9 +3401,14 @@ map.on('moveend', () => { refreshPinsFromCloud(); });
 //
 // Asking for the affected rows back turns that silence into something visible. Used for the two
 // writes that carry the creator's own rating, because that rating is what colours the pin: if it
-// does not save, the map shows the wrong answer while appearing to have worked.
-async function writeExpectingRows(query, what) {
-  const { data, error } = await settled(query.select('pin_id'), what);
+// does not save, the map shows the wrong answer while appearing to have worked. Also used for
+// deletes, where the same blind spot is worse: a delete blocked by row-level security (or aimed at
+// a row already gone) matches zero rows and throws nothing, so the row survives on the server for
+// everyone else while the one person who asked to remove it is told it is gone.
+// idColumn defaults to 'pin_id' because every vote-table caller is keyed by it; callers writing to
+// `pins` or `incidents` directly pass 'id'.
+async function writeExpectingRows(query, what, idColumn = 'pin_id') {
+  const { data, error } = await settled(query.select(idColumn), what);
   if (error) {
     showToast(`Could not ${what}: ${error.message}`);
     return false;
@@ -3470,9 +3475,10 @@ async function persistUpdate(pin) {
 
 async function persistDelete(id) {
   if (!currentUser) return false;
-  const { error } = await settled(sb.from('pins').delete().eq('id', id), 'delete that mark');
-  if (error) { showToast('Could not delete: ' + error.message); return false; }
-  return true;
+  // A plain settled() here only reports a thrown error, and a row-level-security policy that
+  // blocks the delete (or a ref to a row already gone) throws nothing — it matches zero rows and
+  // reports success. writeExpectingRows is what turns that into a real answer.
+  return writeExpectingRows(sb.from('pins').delete().eq('id', id), 'delete that mark', 'id');
 }
 
 // Feeds the reputation system: tells the database that this walker's verdict either backed up or
@@ -4642,8 +4648,11 @@ document.getElementById('incidentDeleteBtn').addEventListener('click', async () 
   const ok = await showConfirm('Remove this report from the map for everyone?',
     { okLabel: 'Delete report', title: 'Delete your report?' });
   if (!ok) { openIncidentView(id); return; }
-  const { error } = await settled(sb.from('incidents').delete().eq('id', id), 'delete that report');
-  if (error) { showToast('Could not delete: ' + error.message); return; }
+  // A plain settled() here only reports a thrown error. A row-level-security policy blocking the
+  // delete matches zero rows and throws nothing, so this used to say "Report deleted." while the
+  // report stayed live for everyone else — the same blind spot persistDelete had for pins.
+  const deleted = await writeExpectingRows(sb.from('incidents').delete().eq('id', id), 'delete that report', 'id');
+  if (!deleted) return;
   showToast('Report deleted.');
   loadIncidents();
 });
