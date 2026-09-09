@@ -273,6 +273,20 @@ refuge queries within a few minutes and it began refusing. This is the layer som
 when they already want to be somewhere else, so one throttled host must not end it. A failure says
 "could not look up nearby places", never "nothing open" — the house rule.
 
+**That house rule had a gap, fixed 2026-09-09.** It only covered the request itself failing
+(`fetchWithTimeout` returning null). A mirror that answers with a 200 but a body that isn't valid
+JSON — an HTML rate-limit page, a connection reset mid-stream — was already caught, but the catch
+turned it into `data = null`, which then fed the same "no candidates found" path as a real,
+successful, empty answer. So the exact failure this section says must never read as "nothing open"
+did read as "nothing open found within a few minutes' walk" — in the one feature that exists to be
+trusted at the worst possible moment. It now short-circuits to the same "could not look up nearby
+places" message as a request failure, the instant the parse fails, before the elements array is
+even touched. **Not verified against a live malformed response** — no way to make Overpass itself
+answer with a broken body from here — but `node tests/geo.test.js` and a parse check on all four
+client files both pass, and the change is a straight copy of the already-verified `!res` branch a
+few lines above it, so the wiring at least is proven by that sibling case having been watched
+failing correctly.
+
 Still open:
 - Verified schemes run by councils exist in some countries and would beat OSM where they exist.
 - Hotels are the interesting gap: a lobby is one of the better places to walk into and 24-hour
