@@ -147,6 +147,27 @@ Still open here:
 - No street name on a walk mark, so they show as unnamed stretches. Reverse-geocoding each one would
   be a Nominatim call per press, which its usage policy does not allow.
 
+### The route sheet's four steps — shipped, then a dead end fixed the same day
+The Route sheet became four steps (plan / choose / ready / feedback) instead of one long scroll, so
+only what matters at each moment is on screen — this file had not yet caught up to describe it.
+
+**Found by reading, fixed 2026-09-09: finishing a walk without answering the feedback form
+permanently stuck the Route sheet.** `finishWalk()` lands the sheet on the `feedback` step and keeps
+`activeRouteCoords` set, because submitting feedback still needs it. But feedback is optional — most
+walks end without it being answered — and the only guard that reset the sheet back to `plan` on
+reopening (`routeBtn`) checked `activeRouteCoords` alone, which stayed truthy either way. So the next
+tap of "Route" reopened straight onto "How was that walk?" for a walk already over, with no visible
+way out: `routePlanBlock` and `routeNewSearchBtn`, the only controls that lead to a new search, are
+both hidden on the `feedback` step. The only paths that happened to clear the stuck state were
+submitting that stale feedback, or the unrelated "Walk me there" refuge button, which calls
+`findRouteBtn` directly. Everyone else hit a dead end at the main entry point to route planning.
+Fixed by tracking the sheet's own step alongside `activeRouteCoords`, so reopening from a stranded
+`feedback` step now starts a fresh search like reopening with no route at all does.
+**Not verified: in the browser** — this was traced by reading `setRouteStep`, `finishWalk` and every
+caller of `activeRouteCoords`, not by clicking through it. Worth confirming on a phone: finish a walk,
+back out of the feedback form without answering, and check "Route" opens a working search rather than
+the old form.
+
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
