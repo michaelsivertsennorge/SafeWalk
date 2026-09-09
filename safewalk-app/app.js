@@ -3386,8 +3386,10 @@ map.on('moveend', () => { refreshPinsFromCloud(); });
 // Asking for the affected rows back turns that silence into something visible. Used for the two
 // writes that carry the creator's own rating, because that rating is what colours the pin: if it
 // does not save, the map shows the wrong answer while appearing to have worked.
-async function writeExpectingRows(query, what) {
-  const { data, error } = await settled(query.select('pin_id'), what);
+// idColumn defaults to 'pin_id' because every other caller writes to a table keyed by it (votes,
+// incident_votes); persistUpdate's own `pins` write is the one exception and passes 'id'.
+async function writeExpectingRows(query, what, idColumn = 'pin_id') {
+  const { data, error } = await settled(query.select(idColumn), what);
   if (error) {
     showToast(`Could not ${what}: ${error.message}`);
     return false;
@@ -3437,12 +3439,22 @@ async function persistCreate(pin) {
 
 async function persistUpdate(pin) {
   if (!currentUser) return;
-  const { error } = await settled(sb.from('pins').update({
-    lat: pin.lat, lng: pin.lng, radius_m: pin.radius || null, path: pin.paths || null,
-    street_name: pin.streetName || null, creator_rating: pin.creatorRating,
-    creator_note: pin.creatorNote || null,
-  }).eq('id', pin.id), 'save changes');
-  if (error) { showToast('Could not save changes: ' + error.message); return; }
+  // The comment above writeExpectingRows has claimed since it was written that it covers "the two
+  // writes that carry the creator's own rating" — but only the votes half actually went through it.
+  // This pins update used plain settled(), which only reports an error when Postgres throws one. A
+  // row-level-security policy that silently matches zero rows throws nothing: the rating, note or
+  // re-traced street would be accepted, the toast would say "Report updated.", and the pin would
+  // keep showing the old rating to everyone else with no sign anything had failed to save.
+  const pinOk = await writeExpectingRows(
+    sb.from('pins').update({
+      lat: pin.lat, lng: pin.lng, radius_m: pin.radius || null, path: pin.paths || null,
+      street_name: pin.streetName || null, creator_rating: pin.creatorRating,
+      creator_note: pin.creatorNote || null,
+    }).eq('id', pin.id),
+    'save changes',
+    'id'
+  );
+  if (!pinOk) return;
   await writeExpectingRows(
     sb.from('votes').update({ rating: pin.creatorRating }).eq('pin_id', pin.id).eq('user_id', currentUser.id),
     'update your rating'

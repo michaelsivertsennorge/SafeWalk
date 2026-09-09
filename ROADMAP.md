@@ -393,6 +393,21 @@ a control, and enlarging it would put a tap target over the map.
   `Mozilla/5.0 (compatible; SafeWalk/1.0; +url)` is accepted.
 - **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
   `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
+- **`persistUpdate` only ever checked half of its own writes — fixed 2026-09-09.** `writeExpectingRows`
+  exists because a Postgres update blocked by row-level security matches zero rows and returns no
+  error at all — the comment above it already said it was "used for the two writes that carry the
+  creator's own rating", but only the `votes` half actually went through it. The `pins` update, which
+  is the one that changes what colour the pin shows on the map, used a plain `settled()` call that
+  only reports a thrown error. A rating edit, note edit, or re-traced street that this policy silently
+  blocked would show "Report updated." and repaint the pin locally while the row everyone else sees
+  never changed. `writeExpectingRows` now takes the id column to select back (`pin_id` by default for
+  the votes/incident_votes writes, `id` for this one) and both halves of `persistUpdate` go through it.
+  **Not verified against the live database** — no RLS-blocked update was actually triggered from this
+  environment, so the new toast ("Could not save changes — the change may not have saved") has been
+  read but not watched firing. Worth doing once against a suspended or otherwise-blocked account.
+  This is a different bug from the callers of `persistUpdate` not awaiting it before showing "Report
+  updated." — see the open PR fixing that ordering issue in `deletePin`/`saveEditPin`/`trimDoneBtn`;
+  this fix is inside `persistUpdate` itself and matters whether or not that one has landed yet.
 
 - **Third-party APIs have no SLA**, but the failure paths were audited on 2026-09-07 by stubbing
   each service individually (so the rest of the app stayed real) and they hold up better than this
