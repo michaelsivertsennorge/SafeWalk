@@ -88,7 +88,30 @@ is not SafeWalk, which looks like the reset silently failing.
 
 Still open here:
 - No rate-limit feedback beyond a generic retry message, and Supabase's own limit on reset emails is
-  per-hour. Someone tapping twice will be told to wait a minute, which may understate it.
+  per-hour. Someone tapping twice will be told to wait a minute, which may understate it. The bullet
+  below narrows this a little: an accidental rapid double-tap, the likelier case, no longer sends two
+  requests before either reply lands.
+
+### Auth-sheet buttons could double-submit — fixed 2026-09-09
+The 2026-09-08 duplicate-submit audit (see "one press cannot file twelve reports") checked every
+button that writes a pin, vote or walk row, and wrapped the one it found unsafe (`startWatchedWalkBtn`)
+in `onceAtATime()`. It did not check the auth sheet, whose four async handlers —
+sign in/sign up, forgot password, change password, set a new password after a reset link — were
+already wrapped in `guarded()`. That only turns a thrown error into a status message; it has no
+re-entrancy guard, so a second tap while the first was still awaiting Supabase ran a second, racing
+request. Concretely: a double-tap on "Send reset link" sent two emails before either reply landed,
+eating into Supabase's per-hour reset-email limit on a single accidental tap rather than the
+deliberate repeated one the line above assumes; a double-tap on sign-up raced two `signUp()` calls.
+
+All four are now also wrapped in `onceAtATime()`, the same fix already applied to
+`startWatchedWalkBtn`, `deleteAccountBtn` and the incident vote buttons — a second tap while the
+first is in flight is now a no-op rather than a second request.
+
+**Not verified: any of it against live Supabase.** The fix is a direct application of a pattern
+already proven elsewhere in this file (`onceAtATime` has its own coverage in the duplicate-submit
+audit above), and `node tests/geo.test.js` still passes (105 assertions, unaffected — this is DOM
+event wiring, not geometry), but nobody has driven a real double-tap through the auth sheet in a
+browser against a real Supabase project to watch it produce one request instead of two.
 
 ### Walk mode — **done, 2026-09-08**
 Asked for by the owner, from the right observation: the app was built for marking places from a map,

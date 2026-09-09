@@ -2917,7 +2917,11 @@ document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
 
 document.getElementById('cancelPasswordBtn').addEventListener('click', resetPasswordForm);
 
-document.getElementById('savePasswordBtn').addEventListener('click', guarded('passwordStatus', async () => {
+// guarded() only turns a thrown error into a status message — it does not stop a second tap while
+// the first is still awaiting the network, which the 2026-09-08 duplicate-submit audit only checked
+// for buttons that write a pin, vote or walk. This one re-authenticates and updates the password;
+// wrapped in onceAtATime() so a double-tap is one attempt, not two racing ones.
+document.getElementById('savePasswordBtn').addEventListener('click', guarded('passwordStatus', onceAtATime(async () => {
   const statusEl = document.getElementById('passwordStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to change your password.'; return; }
   if (!currentUser) { statusEl.textContent = 'Sign in first.'; return; }
@@ -2954,7 +2958,7 @@ document.getElementById('savePasswordBtn').addEventListener('click', guarded('pa
   resetPasswordForm();
   showToast('Password changed.');
   buzz();
-}));
+})));
 
 // ---------- Forgot your password ----------
 // Where any emailed link comes back to. Sending the current page rather than a hardcoded address
@@ -2972,7 +2976,10 @@ function appRedirectUrl() {
   return location.origin + location.pathname.replace(/index\.html$/, '');
 }
 
-document.getElementById('authForgotBtn').addEventListener('click', guarded('authStatus', async () => {
+// Same gap as savePasswordBtn above: without onceAtATime() a double-tap fires two reset emails
+// before the first reply lands, which is worth stopping on its own — Supabase's reset-email limit is
+// per-hour (see ROADMAP), so one accidental double-tap could burn a real share of it.
+document.getElementById('authForgotBtn').addEventListener('click', guarded('authStatus', onceAtATime(async () => {
   const statusEl = document.getElementById('authStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to reset your password.'; return; }
   const email = document.getElementById('authEmail').value.trim();
@@ -2995,7 +3002,7 @@ document.getElementById('authForgotBtn').addEventListener('click', guarded('auth
   statusEl.textContent = error
     ? 'Too many attempts just now. Wait a minute and try again.'
     : 'If there is an account for that address, a reset link is on its way. Check your spam folder too. Open it on this device.';
-}));
+})));
 
 function openNewPasswordSheet() {
   ['resetPassword', 'resetPasswordAgain'].forEach((id) => { document.getElementById(id).value = ''; });
@@ -3003,7 +3010,8 @@ function openNewPasswordSheet() {
   openSheet('newPasswordSheet');
 }
 
-document.getElementById('saveResetPasswordBtn').addEventListener('click', guarded('resetStatus', async () => {
+// Same gap as savePasswordBtn above.
+document.getElementById('saveResetPasswordBtn').addEventListener('click', guarded('resetStatus', onceAtATime(async () => {
   const statusEl = document.getElementById('resetStatus');
   if (!sb) { statusEl.textContent = 'You are offline — reconnect to finish this.'; return; }
   const next = document.getElementById('resetPassword').value;
@@ -3028,7 +3036,7 @@ document.getElementById('saveResetPasswordBtn').addEventListener('click', guarde
   closeSheets();
   showToast('Password changed. You are signed in.');
   buzz();
-}));
+})));
 
 // ---------- Reporter standing ----------
 // Only ever about yourself. There is no way to look up anyone else's accuracy, by design: a public
@@ -3144,7 +3152,8 @@ document.getElementById('authToggleModeBtn').addEventListener('click', () => {
   setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
 });
 
-document.getElementById('authSubmitBtn').addEventListener('click', guarded('authStatus', async () => {
+// Same gap as savePasswordBtn above — a double-tap on sign-up would race two signUp() calls.
+document.getElementById('authSubmitBtn').addEventListener('click', guarded('authStatus', onceAtATime(async () => {
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const statusEl = document.getElementById('authStatus');
@@ -3169,7 +3178,7 @@ document.getElementById('authSubmitBtn').addEventListener('click', guarded('auth
   closeSheets();
   showToast(authMode === 'signin' ? 'Signed in.' : 'Account created.');
   buzz();
-}));
+})));
 
 // ---------- Cloud sync ----------
 function rowToPin(row, myVotedIds) {
