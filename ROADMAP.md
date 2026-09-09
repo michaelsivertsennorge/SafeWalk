@@ -579,9 +579,10 @@ owner expects to redo most of them. Two consequences worth acting on now rather 
 Agreed: nothing that warns someone goes behind a reward or a payment. Alerts, the police layer,
 route safety and SOS stay free and ungated for everyone, signed in or not.
 
-What can be rewarded or sold without touching that: personal history and stats, more than one
-emergency contact, data export, offline map packs for a whole city (a genuine storage cost),
-recognition for accurate reporting, and the organisation accounts the competition already sells.
+What can be rewarded or sold without touching that: personal history and stats, data export,
+offline map packs for a whole city (a genuine storage cost), recognition for accurate reporting, and
+the organisation accounts the competition already sells. (More than one emergency contact was on
+this list when it was written; it shipped free the same day — see below.)
 
 **The real cost cliff is not Supabase.** SafeWalk currently runs on four free public services —
 Overpass, Valhalla, Nominatim and NVDB — each with a usage policy that assumes modest traffic.
@@ -628,6 +629,13 @@ A phone number is the primary contact and stays that way: it works when the othe
 account, no app, and no data. Optionally, and additionally, a contact may be another SafeWalk user,
 which is what the watched-walk mode links to. Never a replacement — the fallback must always be a
 call.
+
+**Up to three, free — shipped 2026-09-08 (commit `13133f3`).** SOS still dials the first contact
+with nothing to choose, which is right for the moment it matters most. What was missing was the
+commonest failure: not a wrong number, but nobody picking up. The moment that call ends, the
+remaining contacts are offered one tap each, already on screen rather than needing to be found, and
+tapping one dials it and re-offers whoever is left. Nothing dials on its own. This makes the
+"More than one emergency contact" line in the Premium list below stale — it shipped free, not paid.
 
 #### Refuges: OpenStreetMap, and the coverage is better than expected
 Measured on 2026-09-08 with a live Overpass query over central Oslo (59.905–59.935, 10.70–10.78),
@@ -774,7 +782,9 @@ place is what actually handles bad actors.
 Nothing that warns anybody is ever behind it. Agreed list:
 - **Offline city packs** — the whole of a city's tiles and street network, downloaded for a trip.
   A genuine storage and bandwidth cost, so charging for it is defensible rather than artificial.
-- **More than one emergency contact**, and watched walks with more than one watcher.
+- **Watched walks with more than one watcher.** (Emergency contacts themselves already go up to
+  three, free, since 2026-09-08 — see "Emergency contact stays a phone number" above. That was on
+  this list when it was written; it shipped free the same day and was never removed from here.)
 - **Your own history and statistics.**
 - **Custom themes and icon packs** — the one category where paying changes nothing for anyone else.
 - **Server-side SMS alerts** (see above), once they exist.
