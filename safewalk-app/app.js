@@ -6,7 +6,18 @@
 const CONTACTS_KEY = 'safewalk_contacts';
 
 const loadContacts = () => JSON.parse(localStorage.getItem(CONTACTS_KEY) || '[]');
-const saveContacts = (c) => localStorage.setItem(CONTACTS_KEY, JSON.stringify(c));
+// Returns whether the write actually landed. Unlike the other localStorage writers in this file
+// (saveOutbox, cachePins, saveStreetCache), a failure here can't be shrugged off silently: this is
+// the only copy of who SOS calls, kept on-device on purpose, so a swallowed quota error would leave
+// the contact looking set for the rest of this session while quietly not surviving a reload.
+const saveContacts = (c) => {
+  try {
+    localStorage.setItem(CONTACTS_KEY, JSON.stringify(c));
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 let pins = [];
 let contacts = loadContacts();
@@ -2431,7 +2442,9 @@ function renderContacts() {
       up.textContent = 'Make first';
       up.addEventListener('click', () => {
         contacts = [c, ...contacts.filter((x) => x !== c)];
-        saveContacts(contacts);
+        if (!saveContacts(contacts)) {
+          showToast("Couldn't save that on this device — it may be full. The order is only changed for now; it will not survive closing the app.", 5000);
+        }
         renderContacts();
         renderMenuHints();
       });
@@ -2442,7 +2455,9 @@ function renderContacts() {
     rm.textContent = 'Remove';
     rm.addEventListener('click', () => {
       contacts = contacts.filter((x) => x !== c);
-      saveContacts(contacts);
+      if (!saveContacts(contacts)) {
+        showToast("Couldn't save that on this device — it may be full. This contact is removed for now; it will come back if the app closes before this is fixed.", 5000);
+      }
       renderContacts();
       renderMenuHints();
     });
@@ -2486,7 +2501,9 @@ document.getElementById('addContactBtn').addEventListener('click', () => {
   // Appended, never replacing: the first contact is the one SOS dials, and quietly demoting the
   // person somebody chose for that is the last thing this screen should do behind their back.
   contacts = [...contacts, { name, phone: next }].slice(0, MAX_CONTACTS);
-  saveContacts(contacts);
+  if (!saveContacts(contacts)) {
+    showToast("Couldn't save this contact on this device — it may be full. SOS can use it for now, but it will be gone if the app closes before this is fixed.", 5000);
+  }
   document.getElementById('contactName').value = '';
   document.getElementById('contactPhone').value = '';
   document.getElementById('contactForm').hidden = true;
