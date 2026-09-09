@@ -351,6 +351,21 @@ Still open:
   a bright fill, because this appears on a phone at night where a light banner is both blinding and
   conspicuous. Verified: fires when fresh and near, stays quiet for a four-day-old report 20m away,
   stays quiet far from a fresh one, and does not repeat.
+- **The delete button on your own incident report was missing the duplicate-submit guard every
+  other write button in this sheet has — fixed 2026-09-09.** `#incidentConfirmBtn` and
+  `#incidentDisputeBtn` are both wrapped in `onceAtATime` with a comment explaining why ("it still
+  fires a request per tap and can close the sheet under someone mid-press"); `#incidentDeleteBtn`,
+  three lines below them, awaited the same `showConfirm()` and then a write and was not wrapped at
+  all — the exact shape of the bug that produced twelve duplicate assault reports from one unguarded
+  button and led to the write-button audit and `onceAtATime` itself (see the comment above
+  `#submitIncident`). `showConfirm()` shares one module-level `confirmResolve` across every call, so
+  a second tap before the first confirm sheet was answered silently overwrote it, orphaning the
+  first tap's promise, and could reach a second `delete` call once past the dialog. Now wrapped the
+  same way as its two neighbours. **Not verified in a browser** — no browser in this environment
+  (see "What you cannot do" in `MAINTENANCE.md`) — read against the existing `onceAtATime` and
+  `voteIncidentOnce` pattern a few lines above it, which this copies exactly. Someone with a phone
+  should double-tap "Delete report" quickly on their own incident and confirm only one confirm
+  sheet/delete happens rather than two.
 
 ## Accessibility
 
