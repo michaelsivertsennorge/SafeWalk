@@ -236,6 +236,23 @@ queued and stays on the map labelled pending; it survives the pins array being r
 a genuine page reload; on reconnect it uploads, gets its real id, loses the pending flag and leaves
 the queue empty; and a server refusal is dropped rather than retried, with the count reported.
 
+**Flushing a queued pin could silently drop its own rating — fixed 2026-09-09.** `persistCreate`'s
+live path already knew a plain `settled()` call is not enough to trust a Supabase write: a
+row-level-security policy that blocks an insert matches zero rows and throws nothing, so it uses
+`writeExpectingRows` to check the row actually landed. `sendOutboxEntry` — the function that replays
+a queued pin once the signal comes back — makes the identical two writes (create the pin, then
+insert the creator's own vote) but only the pin insert went through that check; the vote insert used
+plain `settled()` and threw its result away entirely. A cooldown that started in the time between
+queuing a mark offline and reconnecting (the exact window this feature exists for) would let the pin
+insert through, silently fail the vote insert, and still return `'sent'` — the pending flag cleared,
+"marks uploaded" shown, and a pin left on the map with no rating of its own, indistinguishable from
+one nobody had voted on yet. It now goes through `writeExpectingRows` exactly as `persistCreate`'s
+own vote write does, so the same failure now shows "Could not record your rating" instead of nothing.
+**Not verified against the live database** — no RLS-blocked vote insert was actually triggered from
+this environment during a flush, so the toast has been read but not watched firing. `node
+tests/geo.test.js` (105/105) and a parse check of all four client files still pass; this bug has no
+pure-geometry surface, same as the other write-side fixes in this file.
+
 Still open here:
 - Only pin creates and votes are queued. Edits and deletes of an already-saved mark still need a
   connection, and say so.

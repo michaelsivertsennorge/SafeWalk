@@ -3809,10 +3809,17 @@ async function sendOutboxEntry(entry) {
     const { data, error } = await settled(
       sb.from('pins').insert(entry.row).select('id').single(), 'save that mark');
     if (error) return error.threw ? 'retry' : 'refused';
-    // The creator's own first vote is what gives the pin its score, exactly as in persistCreate.
-    await settled(sb.from('votes').insert({
-      pin_id: data.id, user_id: entry.userId, rating: entry.row.creator_rating,
-    }), 'record your rating');
+    // The creator's own first vote is what gives the pin its score, exactly as in persistCreate —
+    // and checked the same way persistCreate's own vote write is: a plain settled() call only
+    // reports an error Postgres actually threw, and a row-level-security policy that silently
+    // blocks this insert (a cooldown that started between queuing the mark and flushing it) matches
+    // zero rows and throws nothing. A pin flushed through here would then be marked 'sent' — the
+    // pending flag cleared, "N marks uploaded" shown — while sitting on the map with no rating of
+    // its own, indistinguishable from a pin nobody had voted on yet.
+    await writeExpectingRows(
+      sb.from('votes').insert({ pin_id: data.id, user_id: entry.userId, rating: entry.row.creator_rating }),
+      'record your rating'
+    );
     const onScreen = pins.find((p) => p.id === entry.localId);
     if (onScreen) { onScreen.id = data.id; onScreen.pending = false; }
     return 'sent';
