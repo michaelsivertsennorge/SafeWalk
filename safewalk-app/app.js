@@ -4308,6 +4308,16 @@ async function loadRefuges() {
 
   let data;
   try { data = await res.json(); } catch { data = null; }
+  if (!data) {
+    // Same house rule as the !res branch above: a mirror can answer 200 with a body that isn't
+    // JSON at all (an HTML rate-limit notice, a truncated stream), and that must not read as
+    // "nothing open found" — which is what the empty-elements fallback below would otherwise say.
+    summary.textContent = isOffline()
+      ? 'You are offline, so nearby places cannot be looked up.'
+      : 'Could not look up nearby places just now.';
+    refugeLoadedFor = null; // so it tries again next time the sheet opens
+    return;
+  }
   const candidates = ((data && data.elements) || [])
     .map((el) => {
       const tags = el.tags || {};
