@@ -1666,7 +1666,12 @@ const routePins = { from: null, to: null }; // { lat, lng, label } | null
 //   ready    one is chosen: start walking, or send a watch link
 //   feedback only after a walk is finished — asking how a route felt while somebody is still
 //            standing at the start of it was always the wrong moment to ask
+// Tracked alongside the DOM state so the routeBtn handler below can tell "mid-plan, come back to
+// where you were" apart from "a finished walk's feedback form, now abandoned" — activeRouteCoords
+// alone cannot: it stays set through both.
+let routeStep = 'plan';
 function setRouteStep(step) {
+  routeStep = step;
   const show = (id, on) => { const el = document.getElementById(id); if (el) el.hidden = !on; };
   show('routePlanBlock',   step === 'plan');
   show('routeResults',     step === 'choose' || step === 'ready');
@@ -1823,8 +1828,17 @@ document.getElementById('routeBtn').addEventListener('click', () => {
   setPickButtonState('from');
   setPickButtonState('to');
   // Reopening mid-plan should come back to where you were, not throw the search away — but with no
-  // route in play it starts at the beginning.
-  if (!activeRouteCoords) setRouteStep('plan');
+  // route in play it starts at the beginning. A route that ended in the feedback step is not "in
+  // play" either: finishWalk() leaves activeRouteCoords set (submitting feedback needs it) and
+  // opens the sheet on 'feedback', but most walks end without feedback ever being answered — it's
+  // an optional form, not a required step. Without this, activeRouteCoords being merely truthy kept
+  // the guard from firing, so the Route sheet reopened on the stale "How was that walk?" form for a
+  // walk that was already over — a dead end, since routePlanBlock and routeNewSearchBtn are both
+  // hidden on that step, so there was no visible way back to a fresh search.
+  if (!activeRouteCoords || routeStep === 'feedback') {
+    activeRouteCoords = null;
+    setRouteStep('plan');
+  }
   openSheet('routeSheet');
 });
 
