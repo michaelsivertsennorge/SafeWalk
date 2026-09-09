@@ -3586,15 +3586,17 @@ function startWalk() {
   }
 }
 
-function finishWalk({ silent = false } = {}) {
+async function finishWalk({ silent = false } = {}) {
   if (!walkState) return;
   flushWalkMark();
   if (walkState.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(walkState.watchId);
   const marked = walkState.marked;
   walkState = null;
   // Finishing is the walker saying they arrived, which is the whole point of the watcher's page.
+  // If this write fails, the watcher's screen is stuck on "on their way" with no way to learn
+  // otherwise — awaited and checked so that failure can be said out loud instead of assumed away.
   clearInterval(walkIdleTimer);
-  endWatchedWalk('arrived');
+  const toldWatcher = await endWatchedWalk('arrived');
   walkBarEl().hidden = true;
   document.querySelector('.bottom-bar').hidden = false;
   if (silent) return;
@@ -3604,9 +3606,10 @@ function finishWalk({ silent = false } = {}) {
   // just got home is looking at.
   setRouteStep('feedback');
   openSheet('routeSheet');
-  showToast(marked
+  const finished = marked
     ? `Walk finished — ${marked} stretch${marked === 1 ? '' : 'es'} marked.`
-    : 'Walk finished.');
+    : 'Walk finished.';
+  showToast(toldWatcher ? finished : `${finished} Your watcher was not told you arrived — check your connection.`);
 }
 
 // Writes the pending mark for real. Called by the undo timer, by anything that supersedes it, and
@@ -3994,9 +3997,11 @@ document.getElementById('walkShareBtn').addEventListener('click', shareWalkLink)
 document.getElementById('walkShareAgainBtn').addEventListener('click', shareWalkLink);
 
 document.getElementById('walkShareCancelBtn').addEventListener('click', async () => {
-  await endWatchedWalk('cancelled');
+  const toldWatcher = await endWatchedWalk('cancelled');
   closeSheets();
-  showToast('Walk cancelled.');
+  showToast(toldWatcher
+    ? 'Walk cancelled.'
+    : 'Walk cancelled on your phone, but your watcher was not told — check your connection.');
 });
 
 document.getElementById('walkShareStartBtn').addEventListener('click', () => {
@@ -4024,14 +4029,22 @@ async function pushWalkPosition(force = false) {
   // the watcher's page shows how stale its information is, which is the honest signal here.
 }
 
+// Returns whether the watcher's copy of the walk was actually updated. This is the write that
+// tells someone else "they got there" or "they cancelled" — the whole point of the watcher's page
+// — so a caller that shows the walker a plain "done" message regardless of this result would be
+// the same confident-wrong-claim bug the alarm write had (see raiseWalkAlarm). Unlike the alarm,
+// this is not retried: by the time this fires the walker has finished or cancelled and is about to
+// stop looking at the screen, so the honest thing is to say the write did not land, not to pretend
+// a retry loop running after they have put the phone away is a fix.
 async function endWatchedWalk(status) {
-  if (!watchedWalk) return;
+  if (!watchedWalk) return true; // nothing to tell — this was never a watched walk
   const id = watchedWalk.id;
   watchedWalk = null;
   cancelWalkAlarm();
   keepAwake(false);
   document.getElementById('walkWatchedStrip').hidden = true;
-  await settled(sb.from('walks').update({ status, updated_at: new Date().toISOString() }).eq('id', id), 'tell your watcher');
+  const { error } = await settled(sb.from('walks').update({ status, updated_at: new Date().toISOString() }).eq('id', id), 'tell your watcher');
+  return !error;
 }
 
 // ---------- The alarm ----------

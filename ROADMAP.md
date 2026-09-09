@@ -754,6 +754,26 @@ Still open:
   wait-mode reads current state rather than replaying events, but it is not a substitute.
 - No SMS, so nothing reaches anybody who is not looking at a screen. First premium feature.
 
+**`endWatchedWalk` claimed success on a failed write — fixed 2026-09-09.** The function that marks
+a watched walk `arrived` (on finishing a walk) or `cancelled` (the share sheet's Cancel button)
+cleared local state and, for `arrived`, showed "Walk finished" regardless of whether the `walks`
+row update actually reached the server — the exact shape PR #20 already fixed for the alarm write,
+in a function that PR did not touch. A failed write here left the watcher's page stuck reading
+"On their way" indefinitely, with no way for either side to learn the walk had actually ended,
+since the walker had by then put the phone away. `endWatchedWalk` now returns whether the write
+landed; `finishWalk`'s toast and the Cancel button's toast say plainly when it did not ("Your
+watcher was not told you arrived — check your connection."). Deliberately not retried the way the
+alarm write is: by the time either of these fires the walker is done looking at this screen, so a
+background retry loop would be pretending to fix something nobody is left to see resolve — the
+honest fix is telling the truth once, not simulating a guarantee this flow can't back up.
+**Not verified: any of it running.** No browser or Supabase credentials here — read the code and
+the `settled()` contract it now branches on (the same one `raiseWalkAlarm` and every other write in
+the file use), and ran the maths suite and parse check, nothing else. Someone with a phone should
+start a watched walk, go offline, then finish (or cancel) it, and confirm the toast names the
+connection problem instead of claiming the watcher knows — then confirm the watcher's page still
+shows "On their way" until the walker goes back online, since there is no retry to bring it current
+on its own.
+
 ### Proximity-gated voting — decided 2026-09-08: option 3
 The owner deferred the choice. Taking **option 3, weight rather than gate**, and the reason is
 sharper than "it leaks least".
