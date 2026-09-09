@@ -5,7 +5,19 @@
 // reason to upload someone's next-of-kin phone number to a server.
 const CONTACTS_KEY = 'safewalk_contacts';
 
-const loadContacts = () => JSON.parse(localStorage.getItem(CONTACTS_KEY) || '[]');
+// Runs at module load, before anything else in this file — a classic script stops dead on an
+// uncaught exception, so a corrupted value here (a stray browser extension, manual devtools
+// tampering, a partial write) would not just lose the contacts, it would blank the whole app with
+// no error a walker could see. loadStreetCache/loadCachedPins/loadOutbox already guard the same
+// read; this one didn't.
+const loadContacts = () => {
+  try {
+    const c = JSON.parse(localStorage.getItem(CONTACTS_KEY) || '[]');
+    return Array.isArray(c) ? c : [];
+  } catch {
+    return [];
+  }
+};
 const saveContacts = (c) => localStorage.setItem(CONTACTS_KEY, JSON.stringify(c));
 
 let pins = [];

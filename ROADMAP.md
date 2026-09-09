@@ -440,6 +440,18 @@ a control, and enlarging it would put a tap target over the map.
   keeps the pin count local, but a spatial index on the client would be the fix if it ever bites.
 - **`renderPins` is NOT a bottleneck**, contrary to an earlier note here. Measured: 1.6ms at 50
   pins, 8.7ms at 1000, 14.3ms at 2000 — under one frame, scaling linearly. Left alone deliberately.
+- **`loadContacts()` could blank the whole app, not just lose the contacts — fixed 2026-09-09.**
+  It ran unguarded at module top-level (`let contacts = loadContacts();`, before the map, the
+  backend setup, or any event listener), so a corrupted `safewalk_contacts` value in localStorage
+  — a stray extension, manual devtools tampering, a partial write — threw a `JSON.parse` exception
+  that a classic `<script>` never recovers from: everything after that line silently never runs,
+  leaving a blank page with no error a walker could see. The three other localStorage reads in the
+  file (`loadStreetCache`, `loadCachedPins`, `loadOutbox`) already wrap the same pattern in
+  `try/catch`; this one, being the very first line to run, was the one that mattered most and was
+  the one left unguarded. Now matches the others: catches, falls back to `[]`. **Not verified in a
+  browser** — no browser in this environment — only read and matched against the three working
+  siblings it now mirrors. Worth confirming by setting `localStorage.safewalk_contacts` to
+  something malformed and reloading.
 
 ## Ideas from the owner — proposed 2026-09-08, none started
 
