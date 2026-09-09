@@ -4617,7 +4617,13 @@ const voteIncidentOnce = onceAtATime(voteIncident);
 document.getElementById('incidentConfirmBtn').addEventListener('click', () => voteIncidentOnce(1));
 document.getElementById('incidentDisputeBtn').addEventListener('click', () => voteIncidentOnce(-1));
 
-document.getElementById('incidentDeleteBtn').addEventListener('click', async () => {
+// This button sat in the same sheet as the two above it, awaited a confirm and then a write, and
+// was the only one of the three not wrapped. showConfirm() shares one module-level `confirmResolve`
+// across every call, so a second tap before the first confirm sheet had been answered would silently
+// overwrite it — orphaning the first tap's promise forever — and could fire a second delete request
+// once past the dialog. Same bug class as the twelve-duplicate-reports incident that motivated
+// onceAtATime and the belt-and-braces guard on #submitIncident above; this one had neither.
+document.getElementById('incidentDeleteBtn').addEventListener('click', onceAtATime(async () => {
   const id = activeIncidentId;
   const ok = await showConfirm('Remove this report from the map for everyone?',
     { okLabel: 'Delete report', title: 'Delete your report?' });
@@ -4626,7 +4632,7 @@ document.getElementById('incidentDeleteBtn').addEventListener('click', async () 
   if (error) { showToast('Could not delete: ' + error.message); return; }
   showToast('Report deleted.');
   loadIncidents();
-});
+}));
 
 // Everything the route ranker treats as an event rather than an opinion: the police layer and user
 // incident reports, in the shape geo.js expects. Police areas carry their own radius; a user report
