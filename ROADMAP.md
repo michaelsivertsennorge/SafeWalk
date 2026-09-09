@@ -437,9 +437,16 @@ a control, and enlarging it would put a tap target over the map.
   (no browser needed; it's plain Node) now shows 105 passing, so that number was stale here too, the
   same mistake this file keeps warning about for the app itself. Nothing else is covered — the
   persistence layer, the auth gates, the reputation flow and all DOM behaviour are still
-  hand-verified only. Route scoring in particular deserves tests; it lives in `app.js` and reads the
-  global `pins`, so it needs a small refactor to take its inputs as arguments before it can be
-  tested.
+  hand-verified only.
+  This entry also kept saying route scoring "lives in `app.js` and reads the global `pins`, so it
+  needs a small refactor to take its inputs as arguments before it can be tested" — that refactor
+  already happened, on 2026-09-07 (commit 67ce34a), before this sentence was even written. Checked
+  in the code, not assumed: `routeSafetyScore` and `routeRankingClaim` are both defined in
+  `safewalk-app/geo.js`, take every input as an argument, touch no global, and `app.js` no longer
+  declares either name. The tests above already exist and pass — the list of what the suite covers,
+  two lines up, has said "route scoring" the whole time this file was also calling it untestable. A
+  future run reading only this bullet would have gone looking for a refactor to do that was finished
+  weeks of commits ago.
 - **Route scoring is O(samples x pins).** Measured: 4.6ms at 200 pins, 12.9ms at 2000, 30.8ms at
   5000 — and that is per route, so roughly triple it. Fine now, and the geographic fetch bound
   keeps the pin count local, but a spatial index on the client would be the fix if it ever bites.
