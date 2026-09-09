@@ -441,10 +441,18 @@ a control, and enlarging it would put a tap target over the map.
 - **`renderPins` is NOT a bottleneck**, contrary to an earlier note here. Measured: 1.6ms at 50
   pins, 8.7ms at 1000, 14.3ms at 2000 — under one frame, scaling linearly. Left alone deliberately.
 
-## Ideas from the owner — proposed 2026-09-08, none started
+## Ideas from the owner — proposed 2026-09-08
 
 Written down after the owner looked at the competition. Kept together because three of them
 interact, and two of them are decisions about what SafeWalk *is* rather than features to schedule.
+
+**This heading used to say "none started."** That stopped being true the same day: the owner's
+decisions are recorded inline below (branding, rewards vs. paywall, incident-report safeguards,
+proximity-gated voting, premium, emergency contact), idea 3 shipped in full as the "Incident
+reports" section above, and idea 5's watched-walk half shipped as its own section below. What is
+still genuinely unstarted: idea 1 (fog rendering), the legal/IP conversation in idea 4, and the
+push/SMS half of idea 5. A run skimming only this heading would wrongly conclude the whole section
+is open — read the subsections, not just the title.
 
 ### What the competition actually does — safetymap.io, read 2026-09-08
 Worth recording, because it changes the shape of two ideas below. Safetymap (by Wicupp) is a
@@ -491,7 +499,9 @@ marked; earned standing that visibly weights their reports; unlocking non-safety
 personal stats, history export). Reward contribution with recognition, never with safety.
 
 ### 3. An incident button — "something bad happened here"
-The strongest idea of the five, and the most dangerous to build carelessly. It is different in kind
+**Shipped as "Incident reports", above, on 2026-09-08 — this subsection is the design notes it was
+built from, kept for the reasoning.** The strongest idea of the five, and the most dangerous to
+build carelessly. It is different in kind
 from a rating: a rating is an opinion about a place, an incident report is an **accusation that a
 crime occurred at a time and place**, published to strangers.
 
@@ -673,8 +683,10 @@ more carefully than average, and an app that tells people where is safe invites 
 accuracy and liability. And once there is a store listing, the privacy policy and data-protection
 work stops being optional — Apple and Google both require a privacy label before the first release.
 
-### Watched walk — designed 2026-09-08, not yet built
-The owner's design, with the constraints that actually bind.
+### Watched walk — designed 2026-09-08, built the same day
+The owner's design, with the constraints that actually bind. **This heading said "not yet built"
+while the same section, 38 lines down, said "Built 2026-09-08" — write that down before reading the
+rest as a live proposal.**
 
 **Settled and buildable as a web app:**
 - The watcher's phone sleeping is a normal state, not a failure. The walk's current state lives in
