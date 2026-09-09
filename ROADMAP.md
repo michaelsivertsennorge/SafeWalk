@@ -352,6 +352,39 @@ Still open:
   conspicuous. Verified: fires when fresh and near, stays quiet for a four-day-old report 20m away,
   stays quiet far from a fresh one, and does not repeat.
 
+### Account deletion, and a plain-language account of what the app knows — done, 2026-09-08
+The gap "Legal standing and IP" names directly, below: this app records where identified people
+walk, in the EEA, and until now had no way to honour the most basic data-subject right — erasure.
+Deleting an auth user needs the `service_role` key, which must never sit in client code, so it now
+happens in an edge function, `delete-account`.
+
+The function deletes nothing itself. The foreign keys already say what should happen to each table,
+and were designed that way on purpose: `pins.user_id` is `ON DELETE SET NULL`, so street ratings —
+the warnings — stay on the map, unlinked from anybody; votes, incident reports, walks and both
+reputation tables `CASCADE`. Deleting the user and letting the schema do the rest is safer than a
+hand-written list of tables that drifts out of date the next time one is added. What survives is
+stated before the confirmation, not discovered after it — a deletion that quietly leaves things
+behind is not a deletion.
+
+Whose account is deleted comes from the bearer token, never from the request body — taking a user id
+from the caller would let anyone delete anyone. **Verified from outside a browser, against the live
+endpoint:** no token, a garbage token, and the anon key in place of a real session all get 401, and
+the CORS preflight passes. **Not verified: an actual account being deleted end to end** — that needs
+a throwaway Supabase account and has not been run from this environment.
+
+The same commit added "What SafeWalk knows about you" to My Page, written from the schema rather
+than from memory — every line checked against the actual tables and the actual outbound calls first.
+That audit found `profiles(id, display_name)`: unused by the client, zero rows, and a table whose
+whole purpose is attaching a human name to an account in an app built so no contribution can be
+traced to a person. Dropped (migration 023) rather than left, because a table that exists invites a
+future feature to start filling it in, and the day it holds names is the day "your name is never
+shown" stops being structurally true.
+
+This closes the deletion half of the data-subject-rights gap named under "Legal standing and IP"
+below. **Still open there: access/export.** The privacy sheet lets someone see what the app holds
+about them, but not get it as a file — the "data export" line on the Premium list further down is
+that request, not yet built.
+
 ## Accessibility
 
 Audited and fixed: focus now enters a sheet when it opens, sheets trap focus while open, motion is
@@ -532,6 +565,11 @@ working data subject rights (access, deletion), a data processing agreement with
 retention policy, and a defensible answer to "what happens if this database leaks". Norway's
 Datatilsynet publishes guidance in plain Norwegian. Publishing user-generated crime accusations
 (idea 3) adds defamation exposure on top.
+
+**Deletion shipped 2026-09-08** — see "Account deletion, and a plain-language account of what the
+app knows" above. Access/export did not: a person can read what the app holds about them in the
+privacy sheet, but cannot yet get it as a file. A privacy policy, a lawful basis, a DPA with
+Supabase and a retention policy are all still unwritten.
 
 Order of priority, if there is only budget for one conversation: data protection first, trademark
 second, patents not at all.
