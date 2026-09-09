@@ -567,8 +567,14 @@ map.on('moveend', loadLighting);
 // foot are mirrored (violence and public order), and only while still recent — see the
 // politiloggen-sync edge function for how location and precision are decided.
 //
-// These are shown, not folded into the route score. An official report is evidence a person should
-// weigh themselves, and quietly moving a route because of one would hide the reason.
+// This comment used to end here, claiming these are "shown, not folded into the route score" — true
+// until commit 3fa27d9, false on every build since, and never corrected: `routeHazardList()` further
+// down this file feeds both police events and user incident reports into `routeSafetyScore()`, which
+// subtracts a real, recency-weighted penalty for each one and can block the "safest route" claim
+// outright while a hazard still sits on the winning route — see `hazardWeight`/`routeHazards`/
+// `routeRankingClaim` in geo.js. They are still weighed separately from ratings rather than blended
+// in, because they answer a different question: not how a street feels, but whether something
+// happened and how recently.
 const policeLayer = L.layerGroup().addTo(map);
 let policeEvents = [];
 

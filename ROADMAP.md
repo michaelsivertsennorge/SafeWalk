@@ -165,6 +165,20 @@ Still open here:
   separate PRs for it (#3, #4, #6, #10, #12) because none of them ever merged and every fresh run
   found it again. It is fixed on main now, so the roadmap and the code finally agree.
 
+  **A stale comment in `app.js` itself claimed the opposite of what the code does — fixed
+  2026-09-09.** The block above `policeLayer` said police events "are shown, not folded into the
+  route score" — true before commit `3fa27d9`, false on every build since, and never corrected in
+  the code, only in this file (see the still-open bullet below, once it lands: an earlier run
+  found the same stale claim here but only touched `ROADMAP.md`, leaving the identical claim live
+  in the source a reader would trust more). `routeHazardList()` further down `app.js` already fed
+  both police events and user incident reports into `routeSafetyScore()` in `geo.js`, which
+  subtracts a recency-weighted penalty per hazard and blocks a "safest route" claim outright while
+  one still sits on the winning route. The comment now says so. **Not independently re-verified
+  here** — the behaviour itself was already checked by the run that landed `3fa27d9`; this was a
+  documentation-only correction of a comment, confirmed by reading `routeHazardList`,
+  `routeSafetyScore` and `routeRankingClaim` together, not by watching a route re-rank in a
+  browser.
+
   Still open here:
   - **Street extraction now works — it never had before.** The regex was built with a template
     literal where `\b` is the backspace character rather than a word boundary, so the pattern
