@@ -440,6 +440,25 @@ a control, and enlarging it would put a tap target over the map.
   keeps the pin count local, but a spatial index on the client would be the fix if it ever bites.
 - **`renderPins` is NOT a bottleneck**, contrary to an earlier note here. Measured: 1.6ms at 50
   pins, 8.7ms at 1000, 14.3ms at 2000 — under one frame, scaling linearly. Left alone deliberately.
+- **`saveContacts()` could lose your emergency contact without telling you — fixed 2026-09-09.**
+  Contacts are the deliberate on-device exception (see the header comment above `CONTACTS_KEY`):
+  there is no server copy, so a failed write is the only copy failing. `saveContacts` called
+  `localStorage.setItem` unguarded, and all three callers (add, remove, "Make first") ignored its
+  result and carried on as if it had worked — updating the in-memory `contacts` array and closing
+  the form regardless. A full or blocked store (Safari private mode, quota exceeded) therefore left
+  the new contact working for the rest of the session — SOS reads the in-memory array, so a call
+  would still go through — while silently not surviving a reload or the app being closed, which on
+  a phone happens constantly. The three siblings that already guard a localStorage write
+  (`saveOutbox`, `cachePins`, `saveStreetCache`) swallow the error quietly because their caller has
+  another path or the failure is genuinely low-stakes; this one is the single point of truth for who
+  SOS calls, so it now returns whether the write landed, and each of the three callers shows a toast
+  naming exactly what did and didn't happen ("SOS can use it for now, but it will be gone if the app
+  closes before this is fixed") rather than pretending nothing went wrong. **Not verified in a
+  browser** — no browser in this environment. Read against the three working guarded writers above,
+  not watched failing. Worth confirming by filling `localStorage` to quota (or using Safari private
+  mode) and adding, removing, and reordering a contact.
+  (`loadContacts()`, the read side of the same key, has a separate unguarded-crash bug that is its
+  own open PR — this entry is the write side only.)
 
 ## Ideas from the owner — proposed 2026-09-08, none started
 
