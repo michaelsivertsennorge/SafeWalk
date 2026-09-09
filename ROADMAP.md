@@ -243,6 +243,43 @@ Still open here:
   each one lands. Capped at 200 and never sent anywhere except as the marks themselves, but it is a
   local trace, which is worth remembering if the device itself is the threat.
 
+### Route-feedback batch no longer claims success before its writes land — fixed 2026-09-09
+`persistCreate` and `persistVote` were already honest on their own: each awaits its own write and,
+on a real failure, undoes the local optimistic change it had made (`persistCreate` did this;
+`persistVote` did not — see below). But the one caller that submits *several* of them at once —
+"rate this route", which samples up to six points along the walked route and fires a create or a
+vote for each — never awaited any of them. It fired all six, then immediately showed "Thanks —
+added to 6 street ratings along that route" and closed the sheet, before a single one of those six
+writes had actually reached the server. A paused account, a duplicate vote, or a dropped connection
+partway through the batch was reported as an unqualified success — the same shape as every other
+silent failure this file tracks, just on the write side and across several rows at once instead of
+one.
+
+A second, smaller version of the same bug lived inside `persistVote` itself: unlike `persistCreate`,
+it never rolled back the optimistic `safe`/`danger` increment and voter-list entry it had made before
+the write was confirmed. A refused vote (duplicate, or a cooldown-blocked account) left the pin
+showing one vote more than the database ever recorded, correcting itself only whenever the next full
+cloud refresh happened to run. Both functions now return `'ok'`, `'queued'`, or `'failed'`, and
+`persistVote` rolls back its own optimism on `'failed'` exactly as `persistCreate` already did
+(and refreshes the pin's own sheet if it's the one currently open, not just the map).
+
+The batch handler now collects the six write promises, `await`s all of them, and only then shows a
+toast — built from what actually happened: how many saved, how many were queued for lack of a
+connection, how many were refused outright. Because the handler now awaits before it's done writing,
+it went through `onceAtATime` (see the comment above that function in `app.js`) — without it, the
+same await-shaped double-submit gap that motivated `onceAtATime` in the first place would have been
+reopened here.
+
+**Not verified: any of this in a browser.** No client here (see "What you cannot do"), so none of
+the three outcomes — all six saved, some queued offline, some refused — has been watched producing
+its toast, and the sheet-refresh-on-rollback for a single vote hasn't been watched either. `node
+tests/geo.test.js` still passes (105/105, this file has no pure-geometry surface to add a test for)
+and all four client files still parse. Someone with a phone should: rate a route normally and see
+the honest "Thanks — added to N" count; rate one while offline and see the "(N kept on your phone…)"
+qualifier, then confirm it drains from the outbox as usual once reconnected; and, if a second
+account is available, vote on the same route twice from two accounts within the route-feedback flow
+to force a duplicate-vote refusal and confirm the pin's shown vote count doesn't creep upward.
+
 ### Somewhere to go (refuges) — **done, 2026-09-08**
 Borrowed from the competition, and possibly the best idea in the category. Every other layer here
 tells you what to avoid; this is the only one that tells you where to **go** — the nearest door you

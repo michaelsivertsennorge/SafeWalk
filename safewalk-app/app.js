@@ -1843,7 +1843,11 @@ document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((btn) =>
   });
 });
 
-submitRouteFeedbackBtn.addEventListener('click', () => {
+// Wrapped in onceAtATime because this now awaits before it's done (see the comment above that
+// function): the writes below used to fire and forget, so the whole handler ran synchronously
+// end to end and a second tap simply couldn't land inside it. Awaiting them opens exactly the gap
+// onceAtATime exists for.
+submitRouteFeedbackBtn.addEventListener('click', onceAtATime(async () => {
   if (!activeRouteCoords || !selectedRouteFeedbackRating) return;
   if (!requireAccount('to tell others how this route felt')) return;
   const note = document.getElementById('routeFeedbackNote').value.trim();
@@ -1852,12 +1856,14 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
   const step = Math.max(1, Math.floor(activeRouteCoords.length / samples));
   const touched = new Set();
   const voterId = currentVoterId();
-  let affected = 0;
   let skippedAlreadyVoted = 0;
   // Every pin the route actually passed, whether or not this person could still vote on it. The
   // verdict is evidence about all of them, so it counts toward their authors' accuracy even where
   // the vote itself is a duplicate.
   const judged = new Set();
+  // The outcome of every write this batch starts, not just whether it was fired — see below.
+  const writes = [];
+  submitRouteFeedbackBtn.disabled = true;
   for (let i = 0; i < activeRouteCoords.length; i += step) {
     const [lat, lng] = activeRouteCoords[i];
     const nearby = findNearbyPin(lat, lng, 60);
@@ -1869,7 +1875,7 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
       if (rating === 'safe') nearby.safe++; else nearby.danger++;
       if (note) nearby.notes.push({ text: note, rating });
       nearby.voters = [...(nearby.voters || []), voterId];
-      persistVote(nearby.id, rating, note);
+      writes.push(persistVote(nearby.id, rating, note));
     } else {
       const routePin = {
         id: 'p-' + Math.random().toString(36).slice(2),
@@ -1886,24 +1892,45 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
         voters: [voterId],
       };
       pins.push(routePin);
-      persistCreate(routePin);
+      writes.push(persistCreate(routePin));
     }
-    affected++;
   }
   recordRouteJudgement([...judged], rating);
-  renderPins();
+  renderPins(); // optimistic paint while the writes above are still in flight
+  // Every one of `writes` was fired without waiting for the last one, exactly as before — the fix
+  // is not making them sequential, it's not telling the walker "added to N ratings" until they've
+  // actually resolved. Before this, that toast fired the instant the loop finished, which on a
+  // paused account or a duplicate vote was a confident "Thanks" for something that had already
+  // failed a moment later — the same shape MAINTENANCE.md keeps naming, just for a batch instead
+  // of a single mark.
+  const outcomes = await Promise.all(writes);
+  const ok = outcomes.filter((o) => o === 'ok').length;
+  const queued = outcomes.filter((o) => o === 'queued').length;
+  const failed = outcomes.filter((o) => o === 'failed').length;
+  renderPins(); // persistVote/persistCreate roll back their own optimism on a real failure
+  renderMyReports();
   selectedRouteFeedbackRating = null;
   document.querySelectorAll('#routeFeedback [data-route-rating]').forEach((b) => b.classList.remove('selected'));
   document.getElementById('routeFeedbackNote').value = '';
   submitRouteFeedbackBtn.disabled = true;
   const skippedNote = skippedAlreadyVoted ? ` (${skippedAlreadyVoted} spot${skippedAlreadyVoted === 1 ? '' : 's'} skipped — already rated by you)` : '';
-  showToast(`Thanks — added to ${affected} street rating${affected === 1 ? '' : 's'} along that route${skippedNote}.`);
+  const saved = ok + queued;
+  let msg;
+  if (saved === 0) {
+    msg = failed === 1 ? "That rating couldn't be saved." : `None of those ${failed} ratings could be saved.`;
+  } else {
+    msg = `Thanks — added to ${saved} street rating${saved === 1 ? '' : 's'} along that route${skippedNote}`;
+    if (queued) msg += ` (${queued} kept on your phone until you're back online)`;
+    if (failed) msg += ` — ${failed} could not be saved`;
+    msg += '.';
+  }
+  showToast(msg);
   buzz();
   // Answered, so the walk is over: close rather than leaving a spent form on screen.
   closeSheets();
   activeRouteCoords = null;
   setRouteStep('plan');
-});
+}));
 
 document.getElementById('findRouteBtn').addEventListener('click', async () => {
   const status = document.getElementById('routeStatus');
@@ -3400,8 +3427,12 @@ async function writeExpectingRows(query, what) {
   return true;
 }
 // call is a bug rather than a state to handle gracefully — hence the hard guard.
+// Returns how the write actually went — 'ok', 'queued' (kept on the device, no connection) or
+// 'failed' (the server refused it) — so a caller that fired several of these at once (the
+// route-feedback batch below) can report what really happened instead of assuming they all
+// landed just because none of them threw synchronously.
 async function persistCreate(pin) {
-  if (!currentUser) return;
+  if (!currentUser) return 'failed';
   const { data, error } = await settled(sb.from('pins').insert(pinToRow(pin)).select('id').single(), 'save that mark');
   if (error) {
     // The cooldown is enforced by a row-level-security policy, so a suspended account gets a
@@ -3413,6 +3444,7 @@ async function persistCreate(pin) {
     if (blocked) {
       showToast('Your marks are paused for now — see My Page for why.');
       refreshStanding();
+      return 'failed';
     } else if (error.threw) {
       // No connection. The mark is kept on the device and sent when there is one, so it stays on
       // the map — labelled, not pretended to be saved. Marking a street is most useful exactly
@@ -3423,16 +3455,18 @@ async function persistCreate(pin) {
       renderPins();
       renderMyReports();
       showToast('No signal — kept on your phone and uploaded when you are back online.', 4000);
+      return 'queued';
     } else {
       showToast('Could not save to your account: ' + error.message);
+      return 'failed';
     }
-    return;
   }
   pin.id = data.id; // swap the local temp id for the real one
   await writeExpectingRows(
     sb.from('votes').insert({ pin_id: pin.id, user_id: currentUser.id, rating: pin.creatorRating }),
     'record your rating'
   );
+  return 'ok';
 }
 
 async function persistUpdate(pin) {
@@ -3467,7 +3501,7 @@ async function recordRouteJudgement(pinIds, rating) {
 }
 
 async function persistVote(pinId, rating, note) {
-  if (!currentUser) return;
+  if (!currentUser) return 'failed';
   // The (pin_id, user_id) primary key is what actually guarantees one vote per person here.
   const row = { pin_id: pinId, user_id: currentUser.id, rating };
   // The note is the useful half of a rating: "mostly reported unsafe" says little, "no lighting
@@ -3477,11 +3511,26 @@ async function persistVote(pinId, rating, note) {
   if (error && error.threw) {
     queueWrite({ kind: 'vote', row });
     showToast('No signal — your rating is kept on your phone and sent when you are back online.', 4000);
-    return;
+    return 'queued';
   }
   if (error) {
+    // Every caller increments safe/danger and adds the voter locally before this resolves, the
+    // same optimistic shape persistCreate uses. persistCreate already undoes its own optimism on
+    // a real failure; this never did, so a refused vote (a duplicate, or a paused account) left
+    // the map disagreeing with the database until the next full refresh quietly snapped it back —
+    // during which the pin looked like it had one more vote than it ever actually recorded.
+    const p = pins.find((x) => x.id === pinId);
+    if (p) {
+      if (rating === 'safe') p.safe = Math.max(0, p.safe - 1);
+      else p.danger = Math.max(0, p.danger - 1);
+      p.voters = (p.voters || []).filter((v) => v !== currentVoterId());
+      renderPins();
+      if (activePinId === pinId) openPinSheet(pinId); // refresh the open sheet, not just the map
+    }
     showToast(error.message.includes('duplicate') ? "You've already rated this spot." : 'Could not save your vote.');
+    return 'failed';
   }
+  return 'ok';
 }
 
 if (sb) {
