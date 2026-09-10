@@ -236,6 +236,22 @@ queued and stays on the map labelled pending; it survives the pins array being r
 a genuine page reload; on reconnect it uploads, gets its real id, loses the pending flag and leaves
 the queue empty; and a server refusal is dropped rather than retried, with the count reported.
 
+**Queueing itself could silently fail — fixed 2026-09-10.** `saveOutbox()` writes the queue to
+`localStorage` and is itself fallible (storage full, or blocked entirely in Safari private mode).
+It swallowed that error and returned nothing, and neither call site — `persistCreate`'s offline
+path, `persistVote`'s offline path — checked a result, because there was none to check. So the exact
+promise this feature exists to make ("kept on your phone and sent when you are back online") could
+be false at the moment it was made: the write to the server had already failed, the write to the
+device then failed too, and the walker still saw the mark appear on the map as pending and a toast
+saying it was kept. Both callers now check `queueWrite()`'s return value; when it is `false` the pin
+is left out of `pins` (or the vote is not shown as pending) and the toast says plainly that this
+device could not save it either, rather than the confident wrong claim. **Not verified in a
+browser** — no browser in this environment, and reproducing a full or blocked `localStorage` from
+here is not possible either. Read against `saveOutbox`'s existing try/catch and the two call sites,
+not watched failing. Worth confirming with devtools: fill `localStorage` to quota (or use Safari
+private mode) while offline, then create a mark and cast a vote, and check both show the new
+"this device could not save it either" message instead of "kept on your phone".
+
 Still open here:
 - Only pin creates and votes are queued. Edits and deletes of an already-saved mark still need a
   connection, and say so.
