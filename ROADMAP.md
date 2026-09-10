@@ -208,6 +208,17 @@ Still open here:
   window (`backend/005`). Those need real traffic. Wrongly silencing an honest reporter is much
   worse than letting a careless one continue, so err toward leniency when tuning.
 
+  **The standing row went silent on a failed check — fixed 2026-09-10.** `refreshStanding()` hid
+  the whole `standingRow` in Profile whenever `my_standing()` errored or came back empty, exactly
+  the "nothing to report" trap this project keeps finding elsewhere: the one thing that row exists
+  to say is "new marks are paused" (`in_cooldown`), and a failed fetch swallowed that warning as
+  cleanly as an empty one. Someone genuinely in cooldown who hit this on a bad connection would see
+  nothing wrong rather than the reason their marks are not saving. It now shows the row with
+  "Could not check your standing" instead of hiding it, and only hides when signed out — the one
+  case that really means there is nothing to show. Read, not run: this is a DOM/network path with
+  no browser available here, so the failure branch has been read against `settled()`'s contract but
+  never watched firing against a real dropped connection.
+
 ### The outbox — **done, 2026-09-08**
 Marks made without a signal were lost. Since the error-handling fix they were honestly refused, but
 still lost, and that is the wrong answer for this app in particular: walk mode exists to be used
