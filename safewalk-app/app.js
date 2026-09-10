@@ -2922,6 +2922,12 @@ function resetPasswordForm() {
 document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
   document.getElementById('showPasswordFormBtn').hidden = true;
   document.getElementById('passwordForm').hidden = false;
+  // The status line now lives outside the form specifically so a success message survives the
+  // form collapsing — which means reopening the form must clear it explicitly, or the last
+  // "✓ Password changed" would still be sitting there above a fresh, empty attempt.
+  const statusEl = document.getElementById('passwordStatus');
+  statusEl.textContent = '';
+  statusEl.classList.remove('status-ok');
   document.getElementById(inPasswordRecovery ? 'newPassword' : 'currentPassword').focus();
 });
 

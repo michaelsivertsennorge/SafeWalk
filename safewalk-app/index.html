@@ -386,12 +386,14 @@
         <input id="currentPassword" type="password" autocomplete="current-password" aria-label="Current password" placeholder="Current password" />
         <input id="newPassword" type="password" autocomplete="new-password" aria-label="New password" placeholder="New password (min. 6 characters)" />
         <input id="confirmPassword" type="password" autocomplete="new-password" aria-label="Repeat new password" placeholder="Repeat new password" />
-        <p class="sheet-sub" id="passwordStatus" aria-live="polite"></p>
         <div class="sheet-actions">
           <button class="btn btn-ghost" id="cancelPasswordBtn">Cancel</button>
           <button class="btn btn-primary" id="savePasswordBtn">Save new password</button>
         </div>
       </div>
+      <!-- Deliberately OUTSIDE #passwordForm, which collapses (hidden) the instant a change
+           succeeds — a status line left inside it would collapse along with it, unseen. -->
+      <p class="sheet-sub" id="passwordStatus" aria-live="polite"></p>
     </div>
 
     <hr class="divider" />
