@@ -407,6 +407,22 @@ a control, and enlarging it would put a tap target over the map.
 
   Still worth doing: the Valhalla message says "taking too long" even when the connection failed
   instantly. The advice it gives is right either way, so this is cosmetic.
+- **The 📍 locate button failed silently — fixed 2026-09-08.** Tapping it with no location fix yet
+  called `locate()`, which on a denied or unavailable GPS fix cleared the loading spinner and did
+  nothing else: no message, no console line, nothing on screen distinguishing "the tap didn't
+  register" from "location isn't available". This was flagged but left out of scope in PR #14 (the
+  proximity-warning legend fix), which argued a no-op tap is closer to self-explaining than a
+  warning that silently stops firing — true relative to that bug, but still the same house rule
+  broken: a failure that looks identical to nothing having happened. Fixed independently of #14:
+  `locate()` now records why it failed (`denied` vs `unavailable` vs `unsupported`, from the
+  `GeolocationPositionError` code), and the button's click handler shows a toast naming it —
+  "Location is off for SafeWalk. Allow it in your browser's site settings to use this." for a
+  denied permission, since that one needs the person to act; a generic retry message otherwise.
+  **Not verified: watched in a browser.** No browser in this environment — read `err.code === 1` is
+  `PERMISSION_DENIED` per the W3C Geolocation spec and matched the existing `showToast` pattern used
+  elsewhere in the file, but the toast has not been watched appearing on a real denied-permission
+  tap. Someone with a phone needs to deny the location prompt, tap 📍, and confirm the toast reads
+  correctly instead of the button just stopping its spin.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
