@@ -391,6 +391,19 @@ a control, and enlarging it would put a tap target over the map.
   Worth knowing about NVDB: its message asks for "a User-Agent that identifies the system", but
   the check really wants a browser-shaped string. `SafeWalk/1.0 (...)` is refused;
   `Mozilla/5.0 (compatible; SafeWalk/1.0; +url)` is accepted.
+- **Three SOS surfaces still claimed the app calls your contact automatically — fixed 2026-09-10.**
+  Commit `ed4d5d8` (2026-09-10) correctly rewrote the SOS confirmation dialog, because a web page
+  can never place a phone call unattended: every phone requires a person to press dial themselves.
+  That fix reworded only the confirmation dialog and never reached three other places that still
+  asserted the opposite — the SOS button's own `aria-label` ("Emergency: call your contact",
+  read aloud to every screen-reader user who presses it), the Emergency Contact sheet's description
+  ("SOS calls the first person on this list, straight away"), and onboarding slide 5, the first
+  thing a new user is told about the feature ("SOS calls your emergency contact directly"). The
+  exact reasoning behind today's dialog fix — someone discovering mid-emergency that "call now"
+  wasn't literally true would lose seconds believing the call was already going — applies identically
+  to all three. All now say SOS opens the keypad with the number ready, never that it calls.
+  Also fixed in the same line: the Emergency Contact sheet's dash had been mangled to the literal
+  text "2014" (`Add up to three 2014 the others are offered afterwards`) rather than an em dash.
 - **`spatial_ref_sys` is writable with the public key** and cannot be fixed from a migration — see
   `backend/KNOWN_ISSUES.md`. Needs Supabase support or moving PostGIS out of the public schema.
 
