@@ -147,6 +147,25 @@ Still open here:
 - No street name on a walk mark, so they show as unnamed stretches. Reverse-geocoding each one would
   be a Nominatim call per press, which its usage policy does not allow.
 
+### Safe Route's four-step redesign — a dead end fixed, 2026-09-10
+The four-step route sheet (plan / choose / ready / feedback, shipped 2026-09-08) had a regression that
+made its "ready" step unreachable in practice. Picking a route is the only thing a person can actually
+tap in the "choose" step — the map itself is covered by the sheet's own backdrop while the sheet is
+open, so the polyline's click handler was never reachable — and that tap called `selectRoute(rank)`
+with no options. `selectRoute`'s defaults (`keepSheetOpen: false`) then ran `closeSheets()` immediately
+after switching to the "ready" step, so the whole sheet slid away before "Start walking this route" and
+"Send someone a link to follow me" were ever visible. Choosing a route looked like it did nothing;
+the actual way in was to close the sheet by accident and separately guess to reopen it.
+
+This is the same commit's `keepSheetOpen: true` behaviour already used for the (unreachable) polyline
+click and for the initial default selection — the card listener alone was missing it. Fixed by passing
+`{ keepSheetOpen: true }` from the card's own click handler, so choosing a route now stays on the
+"ready" step in place, as the redesign's commit message describes. `node tests/geo.test.js` (105
+assertions) and a parse check on all four client files still pass. **Not verified: nobody has tapped a
+route card in a real browser since this fix** — the bug and the fix were both found by reading the DOM
+structure, the CSS z-index stacking, and the exact call sites, not by watching it render. Worth
+confirming on a phone before trusting it further.
+
 ### Still open
 - **Politiloggen — shipped, first pass.** Police incidents now sync hourly via the
   `politiloggen-sync` edge function and show on the map as dashed red areas. See
