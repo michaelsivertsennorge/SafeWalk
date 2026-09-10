@@ -407,6 +407,22 @@ a control, and enlarging it would put a tap target over the map.
 
   Still worth doing: the Valhalla message says "taking too long" even when the connection failed
   instantly. The advice it gives is right either way, so this is cosmetic.
+
+  That 2026-09-07 audit stubbed each service's *connection* failing — it did not cover a 200 reply
+  with a body that isn't valid JSON, which is a different and real failure (the Overpass path already
+  documents a rate-limited mirror answering with XML instead of JSON). **Reverse geocoding had exactly
+  that gap, and it was found and fixed 2026-09-10.** `reverseGeocode()` — used when picking a route
+  point by tapping the map or dragging an endpoint marker — awaited `res.json()` with nothing to catch
+  a throw, and neither caller (`handleMapPick`, the drag handler in `placeEndpointMarker`) wrapped it
+  either. Both set the route field to "Locating address…" before the await. A malformed reply left
+  that text on screen forever: tapping the map opened no sheet and showed no error, and dragging a
+  marker left `routePins` pointing at the marker's *old* position while it visually sat at the new
+  one — the route drawn would then not be the route to where the marker was, which is exactly the
+  "confident wrong claim" rule 1 warns about. It now falls back to the same `📍 lat, lng` label the
+  "service unreachable" path already used. **Not verified against a real malformed Nominatim reply**
+  — only read, and checked by parsing the file and running the existing test suite, neither of which
+  exercises the DOM. Nobody has watched the route field actually recover in a browser after a bad
+  reply.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
