@@ -1354,3 +1354,8 @@ a:focus-visible {
   cursor: pointer;
 }
 .walk-footer .walk-finish { flex: 1; }
+
+/* A finished action, confirmed where the action happened. The toast sits at the top of the screen;
+   a sheet sits at the bottom, and on a phone that is far enough apart that a confirmation in one
+   is genuinely missed while looking at the other. */
+.status-ok { color: var(--safe-strong); font-weight: 600; }

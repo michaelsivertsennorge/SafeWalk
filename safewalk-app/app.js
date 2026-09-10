@@ -339,6 +339,8 @@ function buzz(ms = 20) {
 // reads as "working," not "did my tap even register." Call again with plain text to clear it.
 function setLoadingStatus(el, text) {
   el.innerHTML = '';
+  // A previous success must not stay green behind the next attempt's spinner.
+  el.classList.remove('status-ok');
   const spinner = document.createElement('span');
   spinner.className = 'spinner';
   el.appendChild(spinner);
@@ -2120,7 +2122,15 @@ document.getElementById('sosBtn').addEventListener('click', async () => {
     openMyPage();
     return;
   }
-  const ok = await showConfirm(`Call ${contact.name} now?`, { okLabel: 'Call now', title: 'Are you sure?' });
+  // "Call now" over-promised, and the owner found the gap by pressing it: a web page cannot place a
+  // call on its own — every phone requires the person to press dial themselves. That is a sensible
+  // rule (no website should be able to ring a number unattended) but it means SOS hands over to the
+  // dialler rather than connecting, and somebody discovering that mid-emergency, having been told
+  // "call now", would lose seconds believing the call was already going. Say what will happen.
+  const ok = await showConfirm(
+    `Your phone will open its keypad with ${contact.name}'s number ready — you still have to press the green call button yourself.`,
+    { okLabel: `Open keypad`, title: `Call ${contact.name}?` },
+  );
   if (!ok) return;
   buzz();
   placeCall(normalisePhone(contact.phone), contact.name);
@@ -2952,6 +2962,14 @@ document.getElementById('savePasswordBtn').addEventListener('click', guarded('pa
 
   inPasswordRecovery = false;
   resetPasswordForm();
+  // In the sheet, not only in the toast. The owner changed their password and reported getting no
+  // confirmation at all — and the toast WAS firing. It sits 64px from the top of the screen while
+  // the person is looking at a sheet along the bottom, half a phone away from where their eyes
+  // are, and resetPasswordForm() had just emptied the fields, so the only thing visible where they
+  // were actually looking was a form going blank. Confirm where the action happened.
+  const done = document.getElementById('passwordStatus');
+  done.textContent = '✓ Password changed. Use the new one next time you sign in.';
+  done.classList.add('status-ok');
   showToast('Password changed.');
   buzz();
 }));
@@ -3025,7 +3043,12 @@ document.getElementById('saveResetPasswordBtn').addEventListener('click', guarde
 
   inPasswordRecovery = false;
   resetPasswordForm();
-  closeSheets();
+  // Deliberately NOT closing the sheet. It used to close itself the instant this succeeded, and the
+  // owner described the result exactly: no confirmation, the window just shut, and then they
+  // noticed they were somehow signed in. Being silently logged in is unnerving rather than
+  // reassuring. Say both things — it worked, and you are now signed in — and let them close it.
+  statusEl.textContent = '✓ Password changed, and you are now signed in.';
+  statusEl.classList.add('status-ok');
   showToast('Password changed. You are signed in.');
   buzz();
 }));
@@ -3088,37 +3111,27 @@ document.getElementById('accountActionBtn').addEventListener('click', async () =
     // make cancelling a sign-out feel like something happened.
     if (!ok) { openProfile(); return; }
 
-    // signOut() defaults to revoking the session on the server, and that request can fail — an
-    // expired or already-revoked refresh token answers 403 — in which case supabase-js leaves the
-    // local session exactly where it was. The result was a button that ran, said "Signed out", and
-    // left you signed in: the error was never read.
+    // Sign-out is LOCAL only, which is both faster and more correct.
     //
-    // Signing out of THIS device never needs the server's permission. So when the round trip fails,
-    // fall back to a local sign-out, which just drops the stored session. Anyone who needs every
-    // device signed out can change their password, which revokes the rest.
-    // Both calls are wrapped, because a rejected promise here is indistinguishable to the user from
-    // the bug above: the await throws, every line after it is skipped, and the confirmation box just
-    // closes onto an unchanged screen. The reporter described exactly that — confirmation appeared,
-    // confirming did nothing — and an unhandled rejection inside an async click handler produces it
-    // with no console message anyone walking home would ever see.
+    // supabase-js defaults to scope 'global', which makes a network round trip to revoke the
+    // session server-side. The owner reported that signing out "hangs for a long time" — that
+    // request is why. Nothing bounded it, so on a weak mobile signal the button just sat there,
+    // and an earlier fix here only handled the round trip FAILING, never it being slow.
+    //
+    // Speed is the smaller half of the argument. 'global' signs you out of EVERY device, which is
+    // the wrong meaning for a per-device sign-out button: signing out on your phone should not sign
+    // you out on your laptop. Local scope drops the stored session on this device and touches no
+    // network at all, so it cannot hang and cannot fail for want of a signal — which is the
+    // guarantee this button should have carried from the start. Anyone who does need every device
+    // signed out can change their password, which revokes the rest.
     let error = null;
     try {
-      ({ error } = await sb.auth.signOut());
+      ({ error } = await settled(sb.auth.signOut({ scope: 'local' }), 'sign out'));
     } catch (thrown) {
       error = thrown || { message: 'sign-out failed' };
     }
     if (error) {
-      try {
-        ({ error } = await sb.auth.signOut({ scope: 'local' }));
-      } catch (thrown) {
-        error = thrown || { message: 'sign-out failed' };
-      }
-    }
-    if (error) {
-      // Not "clear my data on this device" — that button removes settings and the emergency
-      // contact, and deliberately leaves the session alone, so suggesting it here would send
-      // someone to wipe their contact for nothing.
-      showToast('Could not sign out — you are still signed in. Check your connection and try again.');
+      showToast('Could not sign out — you are still signed in. Try again.');
       openProfile();
       return;
     }
