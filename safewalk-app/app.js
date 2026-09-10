@@ -1905,7 +1905,16 @@ submitRouteFeedbackBtn.addEventListener('click', () => {
   setRouteStep('plan');
 });
 
-document.getElementById('findRouteBtn').addEventListener('click', async () => {
+// Wrapped in onceAtATime even though nothing here writes to the server: the handler awaits a
+// geocode and a Valhalla round trip before it is done, and a second tap landing in that gap does
+// not queue behind the first — it starts its own independent run of the exact same mutable state
+// (routeLayer, resultsEl, activeRouteCoords). Two in flight at once meant whichever response came
+// back LAST won, not whichever was tapped last: the slower of two requests could overwrite a newer,
+// already-showing set of routes with a stale one, and activeRouteCoords — what "Start walking this
+// route" actually uses — would then point at whichever route card happened to render last. That is
+// exactly the "confident wrong claim about a street" this project's rule 1 exists to prevent, just
+// reached through a double-tap instead of a bad read.
+document.getElementById('findRouteBtn').addEventListener('click', onceAtATime(async () => {
   const status = document.getElementById('routeStatus');
   const resultsEl = document.getElementById('routeResults');
   resultsEl.innerHTML = '';
@@ -2096,7 +2105,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
       ? err.message
       : 'Something went wrong finding that route. Check your connection and try again.';
   }
-});
+}));
 
 // ---------- SOS ----------
 // A web page can never silently place a call — it always requires the user's own confirmation.
