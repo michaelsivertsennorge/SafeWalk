@@ -303,9 +303,15 @@ Deno.serve(async (req) => {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     // Re-sync anything still active so its status and expiry stay current; skip settled ones we
     // already have, since nothing about them will change again.
-    const { data: existing } = await admin
+    //
+    // Both lookups below used to leave their `error` on the floor: a failed request read exactly
+    // like an empty table, which is a safe *shape* (undefined coerces to [] via `?? []`) but not a
+    // safe *meaning* for the second one — see next comment. Neither is allowed to fail invisibly
+    // now; both are reported in the JSON output, the same way streetExtraction/cordonRule are.
+    const { data: existing, error: existingErr } = await admin
       .from('police_events').select('external_id,is_active')
       .in('external_id', relevant.map((c) => c.external_id));
+    if (existingErr) console.error(`police_events settled-lookup failed: ${existingErr.message}`);
     const settled = new Set((existing ?? []).filter((e: any) => !e.is_active).map((e: any) => e.external_id));
 
     // Incidents we have already decided we cannot place well enough to draw. Without this the same
@@ -313,9 +319,14 @@ Deno.serve(async (req) => {
     // Kristiansand and Bærum reporting "relevant 1, dropped 1" on every run, indefinitely. Nominatim
     // is free and asks not to be queried systematically, and a 429 from it costs us the incidents we
     // could have placed.
-    const { data: failures } = await admin
+    //
+    // A failed read here is the more dangerous of the two: `gaveUpAt` would come back empty, which
+    // reads exactly like "we have never given up on any of these" — silently reintroducing the
+    // hammer-Nominatim-forever bug this table exists to stop, with no sign anything went wrong.
+    const { data: failures, error: failuresErr } = await admin
       .from('police_geocode_failures').select('external_id,message_count')
       .in('external_id', relevant.map((c) => c.external_id));
+    if (failuresErr) console.error(`police_geocode_failures lookup failed: ${failuresErr.message}`);
     const gaveUpAt = new Map((failures ?? []).map((f: any) => [f.external_id, f.message_count ?? 1]));
 
     const todo = relevant.filter((c) => {
@@ -337,6 +348,8 @@ Deno.serve(async (req) => {
       all.forEach((c) => { const k = c.category || '(none)'; categoryBreakdown[k] = (categoryBreakdown[k] || 0) + 1; });
       return json({
         ok: true, dry: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN',
+        settledLookup: existingErr ? `failed: ${existingErr.message}` : 'ok',
+        failuresLookup: failuresErr ? `failed: ${failuresErr.message}` : 'ok',
         messages: list.length, incidents: all.length, categoryBreakdown,
         afterCategoryFilter: byCategory.length, skippedTooOld: tooOld,
         stillRelevant: relevant.length, alreadySettled: settled.size, skippedGivenUp,
@@ -372,8 +385,12 @@ Deno.serve(async (req) => {
     }
 
     // Remember what we could not place, so the next run does not ask Nominatim the same question.
+    // This write failing silently would be worse than never having this table: it would look
+    // exactly like a normal run while quietly restoring the hammer-Nominatim-every-hour bug that
+    // migration 015/016 exists to prevent, invisibly, from the very next invocation onward. So it
+    // is checked and thrown like the police_events upsert above, not fire-and-forget.
     if (dropped.length) {
-      await admin.from('police_geocode_failures').upsert(
+      const { error: failuresWriteErr } = await admin.from('police_geocode_failures').upsert(
         dropped.map((c) => ({
           external_id: c.external_id,
           municipality: c.municipality,
@@ -384,9 +401,15 @@ Deno.serve(async (req) => {
         })),
         { onConflict: 'external_id' },
       );
+      if (failuresWriteErr) throw new Error(`police_geocode_failures upsert failed: ${failuresWriteErr.message}`);
     }
 
-    return json({ ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN', messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, skippedGivenUp, written, dropped: dropped.length });
+    return json({
+      ok: true, municipality, streetExtraction: STREET_EXTRACTION_OK ? 'ok' : 'BROKEN', cordonRule: CORDON_RULE_OK ? 'ok' : 'BROKEN',
+      settledLookup: existingErr ? `failed: ${existingErr.message}` : 'ok',
+      failuresLookup: failuresErr ? `failed: ${failuresErr.message}` : 'ok',
+      messages: list.length, incidents: all.length, relevant: relevant.length, skippedTooOld: tooOld, skippedGivenUp, written, dropped: dropped.length,
+    });
   } catch (err) {
     return json({ ok: false, error: String(err).slice(0, 500) }, 500);
   }

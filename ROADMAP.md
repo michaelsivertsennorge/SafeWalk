@@ -165,6 +165,23 @@ Still open here:
   separate PRs for it (#3, #4, #6, #10, #12) because none of them ever merged and every fresh run
   found it again. It is fixed on main now, so the roadmap and the code finally agree.
 
+  **The sync function itself had the same gap, one level down — fixed 2026-09-10.** Two reads
+  inside `politiloggen-sync` never checked `error`: the settled-incident lookup and the
+  geocode-failure cache lookup (the table 2307e71 added so the same doomed Nominatim query is not
+  repeated every hour forever). Either failing silently read exactly like an empty table rather
+  than "could not tell" — and for the failure-cache lookup specifically, that means silently
+  reintroducing the exact hammer-Nominatim-forever bug 2307e71 fixed, with nothing in the output to
+  show it happened. The write to that same cache (remembering what could not be placed, so the next
+  run does not re-ask) had the identical gap on the write side. All three now check `error`; the two
+  reads are reported in the JSON output as `settledLookup`/`failuresLookup` (`"ok"` or
+  `"failed: <message>"`), the same way `streetExtraction`/`cordonRule` already self-report, and the
+  cache write now throws on failure like the main `police_events` upsert already did.
+  **Not verified: any of it running.** This is a Supabase edge function; this environment has no
+  Deno runtime and no database credentials, so the change is read-verified only — someone with
+  deploy access should call it with `&dry=1` and confirm both fields read `"ok"`, then force a
+  failure (a bad service-role key, or a table rename) and confirm they read `"failed: ..."` instead
+  of quietly reading as empty.
+
   Still open here:
   - **Street extraction now works — it never had before.** The regex was built with a template
     literal where `\b` is the backspace character rather than a word boundary, so the pattern
