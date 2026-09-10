@@ -367,6 +367,14 @@ consumes, though not the same as hearing it. What it showed:
   It reads as "40 m west — Testgata", then "mostly reported unsafe · 0 safe, 4 unsafe", then the
   note. Distance, direction, verdict and reason, in that order, with no map needed. It is much
   more trustworthy since the bearing fix — it used to name the wrong direction outright.
+  **This claim went stale on 2026-09-08 and was fixed on 2026-09-10**: incident reports (migration
+  019) shipped the day after this audit and were never added to the list, so a screen-reader user
+  opening "Near me" right next to a fresh, confirmed assault report heard nothing about it — the
+  only trace of it was the transient on-screen proximity banner, which is not part of this list and
+  is not guaranteed to still be showing. `nearMeEntries()` now folds `incidents` in alongside pins
+  and police events, reading as "Reported: Assault — 40 min ago, confirmed by 2". Not verified in a
+  browser (no browser in this environment) or with a screen reader — only read and parse-checked;
+  someone should open "Near me" near a live incident and confirm it is announced.
 - All 11 sheets are `display:none` when closed, so no closed dialog leaks into the tree.
 - Every form control resolves to a real name; the theme picker exposes `aria-pressed` with
   exactly one chip pressed, so the current theme is announced rather than only shown.

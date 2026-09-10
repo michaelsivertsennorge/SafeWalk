@@ -2697,8 +2697,27 @@ function nearMeEntries() {
     note: e.area ? `Somewhere around ${e.area}` : '',
   }));
 
+  // "Near me" is the non-visual equivalent of the map (see the Accessibility section of
+  // ROADMAP.md) — everything the map shows must be sayable here too. Community incident reports
+  // shipped after that promise was written and were never added to this list, so a screen-reader
+  // user heard nothing about a fresh assault report right next to them.
+  const fromIncidents = incidents.map((inc) => {
+    const kind = INCIDENT_KINDS[inc.category] || {};
+    const when = describeAge(Date.now() - new Date(inc.occurred_at).getTime());
+    const confirmed = Number(inc.confirmed) || 0;
+    return {
+      kind: 'incident',
+      dist: haversine(lat, lng, inc.lat, inc.lng),
+      band: 'danger',
+      name: `Reported: ${kind.label || 'incident'}`,
+      detail: `${when}${confirmed ? `, confirmed by ${confirmed}` : ''}`,
+      bearing: bearingDegrees(lat, lng, inc.lat, inc.lng),
+      note: '',
+    };
+  });
+
   const rank = { danger: 0, mixed: 1, safe: 2 };
-  return [...fromPins, ...fromPolice]
+  return [...fromPins, ...fromPolice, ...fromIncidents]
     .filter((e) => e.dist <= NEAR_ME_RADIUS_M)
     .sort((a, b) => (rank[a.band] - rank[b.band]) || (a.dist - b.dist));
 }
@@ -2727,7 +2746,7 @@ function renderNearMe() {
     const li = document.createElement('li');
     li.className = `near-item near-${e.band}`;
     const words = {
-      danger: e.kind === 'police' ? '' : 'mostly reported unsafe',
+      danger: (e.kind === 'police' || e.kind === 'incident') ? '' : 'mostly reported unsafe',
       mixed: 'mixed reports',
       safe: 'mostly reported safe',
     }[e.band];
