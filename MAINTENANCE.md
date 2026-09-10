@@ -23,6 +23,16 @@ gh pr list --state open --limit 30        # what is already proposed
 git log --oneline -25                     # what already landed on main
 ```
 
+**A fixed `--limit` is not enough by itself — check whether it actually returned everything.**
+`gh pr list` defaults to newest-first, so a low limit quietly hides the *oldest* open PRs, which are
+exactly the ones most likely to have been sitting there unreviewed the longest. On 2026-09-10 this
+happened for real: PR #48 ran the check above, saw "30 open, #18-#47", and still duplicated PR #15
+(opened 2026-09-08) — because #15 had aged onto page 2 and `--limit 30` never showed it. Nobody made
+a mistake; the instruction itself was the bug. #15 was closed as a duplicate once found, and this
+paragraph is the fix: **if the command returns exactly `--limit` results, there may be more — re-run
+with a higher `--limit` (100 is enough headroom today) or page with `--limit 30 --state open` plus
+`gh pr list ... -p 2` before concluding an item is uncovered.**
+
 If an open PR already covers the item you were about to pick, **do not open another**. Either
 improve that branch, or pick a different item. If main already contains the fix, the roadmap is
 stale — say so and update it, which is a full item in its own right. And check the item is still
