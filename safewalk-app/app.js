@@ -2080,7 +2080,7 @@ document.getElementById('findRouteBtn').addEventListener('click', async () => {
     }
 
     entries.forEach((e) => {
-      e.card.addEventListener('click', () => selectRoute(e.rank));
+      e.card.addEventListener('click', () => selectRoute(e.rank, { keepSheetOpen: true }));
       e.poly.on('click', () => selectRoute(e.rank, { keepSheetOpen: true }));
     });
 
