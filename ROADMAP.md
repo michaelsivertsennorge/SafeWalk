@@ -440,6 +440,22 @@ a control, and enlarging it would put a tap target over the map.
   keeps the pin count local, but a spatial index on the client would be the fix if it ever bites.
 - **`renderPins` is NOT a bottleneck**, contrary to an earlier note here. Measured: 1.6ms at 50
   pins, 8.7ms at 1000, 14.3ms at 2000 — under one frame, scaling linearly. Left alone deliberately.
+- **"Find route" could race itself on a double-tap — fixed 2026-09-10.** The whole handler awaits a
+  geocode and a Valhalla round trip before it is done, and — unlike the write buttons the
+  duplicate-submit audit already covered — a second tap landing in that gap was never guarded at
+  all: it started its own independent run over the same mutable state (`routeLayer`, the results
+  list, `activeRouteCoords`). Two searches in flight at once meant whichever response came back
+  *last* won, not whichever was tapped last, so a slower first request could resolve after a faster
+  second one and silently overwrite a newer, already-showing set of routes with a stale one — and
+  `activeRouteCoords`, what "Start walking this route" actually reads, would then point at whichever
+  route card happened to render last. That is this file's rule 1 — a confident wrong claim about a
+  street — reached through a double-tap rather than a bad read. Wrapped in the existing
+  `onceAtATime` helper, which already exists for the identical await-then-mutate shape on write
+  handlers; a second tap while a search is in flight is now a no-op rather than a second race.
+  **Not verified in a browser** — no client here, so the race itself was never reproduced by tapping
+  twice, only read out of the code and reasoned through. `node tests/geo.test.js` (105/105, no pure
+  geometry changed) and a parse check of all four client files still pass. Worth a real double-tap on
+  a phone to confirm the second one is now silently swallowed rather than merely less likely to lose.
 
 ## Ideas from the owner — proposed 2026-09-08, none started
 
