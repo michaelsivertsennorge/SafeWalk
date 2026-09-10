@@ -76,6 +76,8 @@
       <span id="walkWatchedText">Someone is watching this walk</span>
       <button class="walk-watched-share" id="walkShareAgainBtn">Share link</button>
     </div>
+    <p class="route-warn" id="walkWakeWarn" hidden>This phone couldn't be kept awake — if it locks,
+      your watcher may stop seeing updates. Keep it unlocked yourself.</p>
     <div class="walk-status" id="walkStatus" aria-live="polite">Walking — tap either button for the stretch you just passed</div>
     <div class="walk-actions">
       <button class="walk-btn walk-fine" id="walkFineBtn">Felt fine</button>
@@ -527,6 +529,8 @@
     </div>
     <p class="watch-detail" id="watchDetail" aria-live="polite">Looking for the walk…</p>
     <p class="watch-age" id="watchAge"></p>
+    <p class="route-warn" id="watchWakeWarn" hidden>This phone couldn't be kept awake — if it locks,
+      this page may stop updating until you reopen it.</p>
     <div class="watch-actions">
       <button class="btn btn-ghost" id="watchStopBtn">Stop following</button>
     </div>

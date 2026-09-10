@@ -749,6 +749,18 @@ alarm countdown, a one-tap cancel that sends nothing, and finish sending `arrive
 never been watched holding a real screen awake, and the ten-minute idle threshold is a guess that
 only a real walk will confirm or refute.
 
+**A failed wake lock used to be silent — fixed 2026-09-10.** `keepAwake(true)` already returned
+`false` on an unsupported browser or a refused request (battery saver, a backgrounded tab), but
+every caller discarded that boolean. This file stated as settled fact that "neither side sleeps
+until the walk is ended deliberately" while the code had no way of knowing that was true — on a
+device where the lock never acquired, the watcher's screen could lock and stop polling, or the
+walker's geolocation could stop, and neither party was ever told. Both sides now show a standing
+warning (`#walkWakeWarn`, `#watchWakeWarn`) the moment the lock fails to acquire, saying the screen
+may sleep and updates may stop, so at least the person is told to keep it awake by hand rather than
+trusting a mechanism that quietly did not engage. **Not verified: which real devices actually hit
+this path.** No browser is available in this environment — the branch was only read, not watched
+failing on a phone with wake-lock support disabled.
+
 Still open:
 - No push. A watcher whose phone is asleep learns nothing until they open the page — which is why
   wait-mode reads current state rather than replaying events, but it is not a substitute.
