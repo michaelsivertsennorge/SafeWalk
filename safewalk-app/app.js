@@ -3417,12 +3417,18 @@ async function persistCreate(pin) {
       // No connection. The mark is kept on the device and sent when there is one, so it stays on
       // the map — labelled, not pretended to be saved. Marking a street is most useful exactly
       // where the signal is worst, so this is the normal path, not an edge case.
-      queueWrite({ kind: 'pin', localId: pin.id, row: pinToRow(pin) });
-      const restored = { ...pin, pending: true };
-      pins.push(restored);
-      renderPins();
-      renderMyReports();
-      showToast('No signal — kept on your phone and uploaded when you are back online.', 4000);
+      // But queueing is itself a localStorage write, and that can fail too (storage full or
+      // blocked). When it does, the mark is gone from both the server and the device — showing it
+      // as pending here would be exactly the "confident wrong claim" this project keeps finding.
+      if (queueWrite({ kind: 'pin', localId: pin.id, row: pinToRow(pin) })) {
+        const restored = { ...pin, pending: true };
+        pins.push(restored);
+        renderPins();
+        renderMyReports();
+        showToast('No signal — kept on your phone and uploaded when you are back online.', 4000);
+      } else {
+        showToast('No signal, and this device could not save your mark either. Try again once you have a connection.', 5000);
+      }
     } else {
       showToast('Could not save to your account: ' + error.message);
     }
@@ -3475,8 +3481,11 @@ async function persistVote(pinId, rating, note) {
   if (note && note.trim()) row.note = note.trim().slice(0, 140);
   const { error } = await settled(sb.from("votes").insert(row), 'save your vote');
   if (error && error.threw) {
-    queueWrite({ kind: 'vote', row });
-    showToast('No signal — your rating is kept on your phone and sent when you are back online.', 4000);
+    if (queueWrite({ kind: 'vote', row })) {
+      showToast('No signal — your rating is kept on your phone and sent when you are back online.', 4000);
+    } else {
+      showToast('No signal, and this device could not save your rating either. Try again once you have a connection.', 5000);
+    }
     return;
   }
   if (error) {
@@ -3751,23 +3760,30 @@ function loadOutbox() {
     return [];
   }
 }
+// Returns whether the write actually landed. The comment this replaced said "the caller has
+// already told the walker whether their mark was kept" — but no caller checked this return value,
+// so that was aspirational, not true: a full or blocked store (Safari private mode, quota exceeded)
+// meant the mark was never actually queued while every caller still showed "kept on your phone and
+// sent when you are back online." That is a confident wrong claim about the one thing this feature
+// exists to promise.
 function saveOutbox(items) {
   try {
     localStorage.setItem(OUTBOX_KEY, JSON.stringify(items.slice(-OUTBOX_MAX)));
+    return true;
   } catch {
-    // Storage full or blocked. Nothing useful to do — the caller has already told the walker
-    // whether their mark was kept, and lying about it now would be worse than the failure.
+    return false;
   }
 }
 function outboxForMe() {
   return currentUser ? loadOutbox().filter((e) => e.userId === currentUser.id) : [];
 }
 function queueWrite(entry) {
-  if (!currentUser) return;
+  if (!currentUser) return false;
   const items = loadOutbox();
   items.push({ ...entry, at: Date.now(), userId: currentUser.id });
-  saveOutbox(items);
-  renderMenuHints();
+  const ok = saveOutbox(items);
+  if (ok) renderMenuHints();
+  return ok;
 }
 
 // A queued pin has no server id yet, so it keeps its local one until the insert succeeds.
