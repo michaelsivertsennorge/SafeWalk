@@ -3999,10 +3999,13 @@ document.getElementById('walkShareCancelBtn').addEventListener('click', async ()
   showToast('Walk cancelled.');
 });
 
-document.getElementById('walkShareStartBtn').addEventListener('click', () => {
+document.getElementById('walkShareStartBtn').addEventListener('click', async () => {
   startWalk();  // the ordinary walk bar, plus the watched strip below
   document.getElementById('walkWatchedStrip').hidden = false;
-  keepAwake(true);
+  // A failed lock is not a reason to refuse the walk — it is a reason to say so. Silently going
+  // ahead would let both sides believe the screen is pinned awake when it is not.
+  const awake = await keepAwake(true);
+  document.getElementById('walkWakeWarn').hidden = awake;
   pushWalkPosition(true);
 });
 
@@ -4031,6 +4034,7 @@ async function endWatchedWalk(status) {
   cancelWalkAlarm();
   keepAwake(false);
   document.getElementById('walkWatchedStrip').hidden = true;
+  document.getElementById('walkWakeWarn').hidden = true;
   await settled(sb.from('walks').update({ status, updated_at: new Date().toISOString() }).eq('id', id), 'tell your watcher');
 }
 
@@ -4108,7 +4112,9 @@ function enterWatchMode(token) {
   document.getElementById('mapHint').hidden = true;
   document.getElementById('watchPanel').hidden = false;
   watchLayer = L.layerGroup().addTo(map);
-  keepAwake(true);
+  // Same silent-failure risk as the walker's side: a lock that never acquired lets a sleeping
+  // phone look identical to one that is watching.
+  keepAwake(true).then(awake => { document.getElementById('watchWakeWarn').hidden = awake; });
   pollWatchedWalk();
   watchPollTimer = setInterval(pollWatchedWalk, WATCH_POLL_MS);
 }
