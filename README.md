@@ -25,9 +25,13 @@ node tests/geo.test.js          # pure maths — no network
 node tests/permissions.test.js  # what the public API key can and cannot do (hits the live database)
 ```
 
-Covers the maths that decides what the app tells you about a street: distances, the street graph and
-its shortest paths, polyline decoding, the rating bands, and — since walk mode — where a mark made
-while walking actually lands. Exits non-zero on failure.
+Covers the maths that decides what the app tells you about a street and a route: distances, the
+street graph and its shortest paths, polyline decoding, the rating bands and their colour contrast,
+direction in words for the non-visual "Near me" reading, route safety scoring and what the app is and
+is not allowed to claim about the route it recommends, hazard-aware ranking (police reports and user
+incidents), refuge opening-hours parsing, the PostGIS and NVDB geometry parsers behind the police and
+lit-street layers, how old a report reads as, and — since walk mode — where a mark made while walking
+actually lands. Exits non-zero on failure.
 
 One check in there is not about maths at all. `geo.js` and `app.js` both load as classic scripts,
 app.js second, so a same-named function in app.js silently replaces the tested one from geo.js —
