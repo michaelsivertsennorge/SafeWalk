@@ -59,6 +59,19 @@ an actual password change against Supabase** — that needs a real account and a
 password, so the two network calls (`signInWithPassword` to re-authenticate, then `updateUser`) have
 been read but never run. Worth doing once on a throwaway account before this is sold.
 
+The owner tried it on a real phone on 2026-09-10 and reported no confirmation at all after a
+successful change — the toast (64px from the top) was firing the whole time, but a sheet along the
+bottom is where the eyes were, and the form emptying itself was the only visible thing there. The fix
+that landed the same day added a green line inside the sheet — but it wrote that line into
+`#passwordForm`, the very div its own success path had just collapsed to `hidden`, so the confirmation
+was invisible for exactly the same reason the toast was easy to miss: nothing was where the eyes
+were. `resetStatus`, the equivalent line for the *forgotten*-password flow, lives in a different sheet
+and was never affected. Fixed 2026-09-10 by moving `#passwordStatus` out from inside `#passwordForm`
+to a sibling that survives the form collapsing, and clearing it again when the form is reopened so an
+old "✓ Password changed" cannot sit above a fresh attempt. **Not verified in a browser** — read
+against the DOM structure and confirmed by tracing exactly which element `resetPasswordForm()` hides
+and which one the success handler writes into, but nobody has watched it render.
+
 **Resetting a forgotten password** was added the same day, because the change form requiring the old
 password left anyone who had forgotten it with no way back into their account. "Forgot your
 password?" on the sign-in sheet sends a link via `resetPasswordForEmail`; following it fires
