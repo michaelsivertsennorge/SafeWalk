@@ -1645,9 +1645,19 @@ async function reverseGeocode(lat, lng) {
   const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=17`;
   const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } });
   if (res) {
-    const data = await res.json();
-    if (data && data.display_name) {
-      return data.display_name.split(',').slice(0, 3).join(',').trim();
+    // A 200 with a body that isn't valid JSON is real here too, same as Overpass (see
+    // fetchOverpassWays): a rate-limited or misbehaving mirror can answer with something other than
+    // JSON. Both callers of this function (map-tap picking, marker-drag) set the route field to
+    // "Locating address…" before awaiting this and have nothing else to catch a throw here, so an
+    // unguarded res.json() left that text on screen forever and, on a drag, left routePins pointing
+    // at the marker's old position while it visually sat at the new one.
+    try {
+      const data = await res.json();
+      if (data && data.display_name) {
+        return data.display_name.split(',').slice(0, 3).join(',').trim();
+      }
+    } catch {
+      // fall through to the coordinate label below
     }
   }
   return `📍 ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
