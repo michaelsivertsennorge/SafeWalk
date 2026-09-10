@@ -3059,14 +3059,24 @@ document.getElementById('saveResetPasswordBtn').addEventListener('click', guarde
 async function refreshStanding() {
   const row = document.getElementById('standingRow');
   if (!row) return;
+  const headline = document.getElementById('standingHeadline');
+  const detail = document.getElementById('standingDetail');
   if (!currentUser) { row.hidden = true; return; }
   const { data, error } = await settled(sb.rpc('my_standing'), 'load your standing');
-  if (error || !data || !data.length) { row.hidden = true; return; }
+  if (error || !data || !data.length) {
+    // Hiding the row here used to read as "nothing to report" — the exact bug this project keeps
+    // finding elsewhere. The one thing this row exists to say, "new marks are paused", is precisely
+    // what a silent hide would swallow: someone whose marks ARE blocked, hitting this on a bad
+    // connection, would see nothing wrong rather than the warning they actually need.
+    row.hidden = false;
+    row.classList.remove('standing-warn');
+    headline.textContent = 'Could not check your standing';
+    detail.textContent = 'This needs a connection. Reopen Profile to try again.';
+    return;
+  }
   const s = data[0];
   const total = Number(s.confirmations) + Number(s.contradictions);
   row.hidden = false;
-  const headline = document.getElementById('standingHeadline');
-  const detail = document.getElementById('standingDetail');
 
   if (!total) {
     headline.textContent = 'No feedback on your marks yet';
