@@ -379,6 +379,13 @@
       <hr class="divider" />
       <p class="sheet-label">Password</p>
       <button class="btn btn-secondary btn-block" id="showPasswordFormBtn">Change my password</button>
+      <!-- OUTSIDE the form on purpose. #passwordStatus below is a child of #passwordForm, and
+           succeeding collapses that form — so a confirmation written there is written into
+           something that has just been hidden, which is exactly what happened: the owner reported
+           getting no confirmation, a first fix "confirmed" into the hidden div, and a test reading
+           textContent passed because textContent reads hidden elements perfectly happily. This line
+           survives the collapse. -->
+      <p class="sheet-sub" id="passwordDone" aria-live="polite" hidden></p>
       <div class="password-form" id="passwordForm" hidden>
         <!-- The current password is asked for deliberately. This app gets opened one-handed on an
              unlocked phone at night; if that phone is taken, whoever holds it must not be able to
@@ -470,7 +477,9 @@
   <section class="sheet" id="contactSheet" role="dialog" aria-modal="true" aria-labelledby="contactSheetTitle" tabindex="-1" hidden>
     <div class="sheet-handle"></div>
     <h2 id="contactSheetTitle">Emergency contact</h2>
-    <p class="sheet-sub">SOS calls the first person on this list, straight away, with nothing to choose between when you are in a hurry. Add up to three 2014 the others are offered afterwards, in case the first one does not pick up.</p>
+    <p class="sheet-sub">SOS opens your phone's keypad with the first person on this list ready to
+      dial — you still press the call button yourself. Nothing to choose between when you are in a
+      hurry. Add up to three; the others are offered afterwards, in case the first does not pick up.</p>
     <div id="contactList" class="contact-list"></div>
     <button class="btn btn-secondary btn-block" id="showContactFormBtn">+ Add emergency contact</button>
     <div class="contact-form" id="contactForm" hidden>
@@ -680,9 +689,9 @@
       <div class="onboarding-slide" data-slide="5" hidden>
         <div class="onboarding-icon">🆘</div>
         <h2>SOS &amp; My Page</h2>
-        <p class="sheet-sub">SOS calls your emergency contact directly, after you confirm — so set
-          one before you need it. Your reports, that contact, your theme and your account all live
-          under My Page.</p>
+        <p class="sheet-sub">SOS puts your emergency contact on your phone's keypad, ready to dial —
+          so set one before you need it. Your reports, that contact, your theme and your account all
+          live under My Page.</p>
       </div>
     </div>
     <div class="onboarding-dots" id="onboardingDots"></div>

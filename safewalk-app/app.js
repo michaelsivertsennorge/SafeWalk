@@ -2905,6 +2905,10 @@ function resetPasswordForm() {
   const form = document.getElementById('passwordForm');
   const showBtn = document.getElementById('showPasswordFormBtn');
   if (!form || !showBtn) return;
+  // A previous success must not still be sitting there when the form is opened again — the caller
+  // that shows a fresh confirmation unhides this again straight after.
+  const done = document.getElementById('passwordDone');
+  if (done) { done.hidden = true; done.textContent = ''; }
   form.hidden = true;
   showBtn.hidden = false;
   ['currentPassword', 'newPassword', 'confirmPassword'].forEach((id) => {
@@ -2922,6 +2926,10 @@ function resetPasswordForm() {
 document.getElementById('showPasswordFormBtn').addEventListener('click', () => {
   document.getElementById('showPasswordFormBtn').hidden = true;
   document.getElementById('passwordForm').hidden = false;
+  // Starting a new change clears the last one's confirmation, so a stale "✓ Password changed" is
+  // never sitting above a form being filled in again.
+  const done = document.getElementById('passwordDone');
+  if (done) { done.hidden = true; done.textContent = ''; done.classList.remove('status-ok'); }
   document.getElementById(inPasswordRecovery ? 'newPassword' : 'currentPassword').focus();
 });
 
@@ -2962,14 +2970,18 @@ document.getElementById('savePasswordBtn').addEventListener('click', guarded('pa
 
   inPasswordRecovery = false;
   resetPasswordForm();
-  // In the sheet, not only in the toast. The owner changed their password and reported getting no
-  // confirmation at all — and the toast WAS firing. It sits 64px from the top of the screen while
-  // the person is looking at a sheet along the bottom, half a phone away from where their eyes
-  // are, and resetPasswordForm() had just emptied the fields, so the only thing visible where they
-  // were actually looking was a form going blank. Confirm where the action happened.
-  const done = document.getElementById('passwordStatus');
+  // Confirm where the action happened AND somewhere that still exists afterwards.
+  //
+  // The toast was always firing; it sits 64px from the top of the screen while the person is
+  // looking at a sheet along the bottom, half a phone away. The first attempt at fixing that wrote
+  // into #passwordStatus — which is a child of #passwordForm, the very thing resetPasswordForm()
+  // has just hidden. So the confirmation went into a hidden element and the screen still said
+  // nothing. The test missed it because it asserted on textContent, and textContent reads hidden
+  // elements quite happily; visibility is what needed asserting.
+  const done = document.getElementById('passwordDone');
   done.textContent = '✓ Password changed. Use the new one next time you sign in.';
   done.classList.add('status-ok');
+  done.hidden = false;
   showToast('Password changed.');
   buzz();
 }));
