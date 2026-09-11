@@ -29,6 +29,14 @@ stale — say so and update it, which is a full item in its own right. And check
 real in the code in front of you before you write a line: `ROADMAP.md` describes the day it was
 written, not necessarily today.
 
+That same `gh pr list` also tells you something the duplicate check does not: whether the queue is
+being reviewed at all. On 2026-09-11 it showed 30 open PRs (#24-#53), the oldest three days old,
+CI green, with **zero comments and zero reviews** on every one sampled. Diagnosis was never the
+bottleneck here; review was. Opening a 31st fix nobody has looked at yet does not help the person
+waiting on the first ten — it only makes the queue longer to triage. So: if `gh pr list --state
+open` returns more than 15 pull requests, **stop and say so instead of opening another one.** That
+is a fine, honest outcome for the hour — the same as finding nothing worth doing.
+
 ## What to do in one run
 
 Read `ROADMAP.md` and `README.md` in full first. `ROADMAP.md` is the memory between runs: what is
