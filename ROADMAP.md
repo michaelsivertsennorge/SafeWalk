@@ -405,8 +405,16 @@ a control, and enlarging it would put a tap target over the map.
     that address, try adding a city name", which sends someone off correcting a correct address.
   - NVDB down — silent until 2026-09-06; now warns once and stays retryable.
 
-  Still worth doing: the Valhalla message says "taking too long" even when the connection failed
-  instantly. The advice it gives is right either way, so this is cosmetic.
+  **This file used to say the Valhalla message was wrong for that too, and it no longer is — fixed
+  2026-09-08, in the same commit as PR #8, closed rather than merged when the owner asked for it to
+  be fixed directly.** `fetchWithTimeout` used to collapse a timeout, a network failure and an HTTP
+  error into a bare `null`, so the routing error said "taking too long to respond" even when the
+  connection had failed instantly — telling someone to wait when the answer was to check their
+  signal. It now records which of the three happened in `lastFetchFailure` and the route-finding
+  error picks the matching message: "taking too long" only for an actual timeout, "having trouble
+  right now" for an HTTP error, "Couldn't reach the routing service. Check your connection and try
+  again." for anything else, and the existing offline message when `navigator.onLine` is false.
+  Read in `safewalk-app/app.js`, not run against a real dead connection from this pass.
 - **Service worker registration cannot be exercised in this development environment**, so offline
   has never actually been watched working. Registration fails here with "An unknown error occurred
   when fetching the script" — but an A/B against a second, unrelated server serving a three-line
