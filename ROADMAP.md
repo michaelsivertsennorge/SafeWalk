@@ -430,11 +430,15 @@ a control, and enlarging it would put a tap target over the map.
   development browser, proven by an A/B against an unrelated server. Airplane mode on a phone,
   now that the app is on HTTPS, is the only thing that settles it.
 - **Test coverage is thin.** `tests/geo.test.js` now covers the pure maths in `safewalk-app/geo.js`
-  (82 assertions: distances, street graph, shortest paths, polyline decoding, rating bands, route scoring, and where a mark made while walking lands). Run it
-  with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the auth gates, the
-  reputation flow and all DOM behaviour are still hand-verified only. Route scoring in particular
-  deserves tests; it lives in `app.js` and reads the global `pins`, so it needs a small refactor to
-  take its inputs as arguments before it can be tested.
+  (105 tests, 207 assertions: distances, street graph, shortest paths, polyline decoding, rating
+  bands, route scoring, route hazards and ranking claims, and where a mark made while walking
+  lands). Run it with `node tests/geo.test.js`. Nothing else is covered — the persistence layer, the
+  auth gates, the reputation flow and all DOM behaviour are still hand-verified only.
+  This entry used to say route scoring "lives in `app.js` and reads the global `pins`, so it needs a
+  small refactor to take its inputs as arguments before it can be tested" — stale. `routeSafetyScore`
+  and `routeRankingClaim` both already live in `geo.js` as pure functions (coordinates, distance, the
+  pin list and a hazard list all passed in, nothing read from a global), and both are exercised
+  extensively in `tests/geo.test.js` already. The refactor this bullet was waiting on has happened.
 - **Route scoring is O(samples x pins).** Measured: 4.6ms at 200 pins, 12.9ms at 2000, 30.8ms at
   5000 — and that is per route, so roughly triple it. Fine now, and the geographic fetch bound
   keeps the pin count local, but a spatial index on the client would be the fix if it ever bites.
